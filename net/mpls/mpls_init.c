@@ -173,8 +173,8 @@ static int mpls_netdev_event(struct notifier_block *this, unsigned long event, v
 	switch (event) {
 	case NETDEV_UNREGISTER:
 	case NETDEV_DOWN:
-		mpls_release_netdev_in_nhlfe(dev);
 		mpls_release_netdev_in_ilm(dev);
+		mpls_release_netdev_in_nhlfe(dev);
 		break;
 	case NETDEV_CHANGEMTU:
 		mpls_change_mtu_nhlfe(dev);
