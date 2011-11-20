@@ -49,6 +49,15 @@ config IPV6_ROUTER_PREF
 
 	  If unsure, say N.
 
+config INET6_MPLS
+       tristate "IPv6: MPLS support (EXPERIMENTAL)"
+       depends on MPLS && EXPERIMENTAL
+       ---help---
+         If you say Y here, the kernel will support being an ingress
+         and egress LER for IPv6 packets.
+
+         If unsure, say N.
+
 config IPV6_ROUTE_INFO
 	bool "IPv6: Route Information (RFC 4191) support (EXPERIMENTAL)"
 	depends on IPV6_ROUTER_PREF && EXPERIMENTAL

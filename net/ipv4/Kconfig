@@ -163,6 +163,15 @@ config IP_PNP_RARP
 	  operating on your network. Read
 	  <file:Documentation/filesystems/nfs/nfsroot.txt> for details.
 
+config IP_MPLS
+       tristate "IP: MPLS support (EXPERIMENTAL)"
+       depends on INET && MPLS && EXPERIMENTAL
+       ---help---
+         If you say Y here, the kernel will support being an ingress and
+         egress LER for IPv4 packets
+
+         If unsure, say N.
+
 # not yet ready..
 #   bool '    IP: ARP support' CONFIG_IP_PNP_ARP
 config NET_IPIP

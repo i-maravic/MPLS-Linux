@@ -127,10 +127,13 @@ int eth_rebuild_header(struct sk_buff *skb)
 {
 	struct ethhdr *eth = (struct ethhdr *)skb->data;
 	struct net_device *dev = skb->dev;
-
 	switch (eth->h_proto) {
 #ifdef CONFIG_INET
 	case htons(ETH_P_IP):
+		return arp_find(eth->h_dest, skb);
+#endif
+#ifdef CONFIG_MPLS
+	case htons(ETH_P_MPLS_UC):
 		return arp_find(eth->h_dest, skb);
 #endif
 	default:

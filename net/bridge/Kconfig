@@ -33,6 +33,15 @@ config BRIDGE
 
 	  If unsure, say N.
 
+config BRIDGE_MPLS
+       tristate "Bridge: MPLS support (EXPERIMENTAL)"
+       depends on BRIDGE && MPLS && EXPERIMENTAL
+       ---help---
+         If you say Y here, the kernel will support being an egress for
+         Ethernet over MPLS packets
+
+         If unsure, say N.
+
 config BRIDGE_IGMP_SNOOPING
 	bool "IGMP/MLD snooping"
 	depends on BRIDGE

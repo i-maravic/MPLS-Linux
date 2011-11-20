@@ -105,6 +105,13 @@ static int ip6_finish_output2(struct sk_buff *skb)
 	skb->protocol = htons(ETH_P_IPV6);
 	skb->dev = dev;
 
+#ifdef CONFIG_INET6_MPLS
+	if (dst->child) {
+               skb_dst_set(skb, skb_dst_pop(skb));
+               return dst_output(skb);
+    }
+#endif
+
 	if (ipv6_addr_is_multicast(&ipv6_hdr(skb)->daddr)) {
 		struct inet6_dev *idev = ip6_dst_idev(skb_dst(skb));
 
