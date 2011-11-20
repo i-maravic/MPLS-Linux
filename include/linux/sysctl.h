@@ -221,6 +221,7 @@ enum
 	NET_LLC=18,
 	NET_NETFILTER=19,
 	NET_DCCP=20,
+	NET_MPLS=21,
 	NET_IRDA=412,
 };
 
@@ -776,6 +777,13 @@ enum {
 	NET_BRIDGE_NF_CALL_IP6TABLES = 3,
 	NET_BRIDGE_NF_FILTER_VLAN_TAGGED = 4,
 	NET_BRIDGE_NF_FILTER_PPPOE_TAGGED = 5,
+};
+
+/* /proc/sys/net/mpls */
+enum
+{
+       NET_MPLS_DEBUG=1,
+       NET_MPLS_DEFAULT_TTL=2,
 };
 
 /* proc/sys/net/irda */

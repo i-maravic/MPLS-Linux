@@ -1134,6 +1134,9 @@ struct net_device {
 	void			*ax25_ptr;	/* AX.25 specific data */
 	struct wireless_dev	*ieee80211_ptr;	/* IEEE 802.11 specific data,
 						   assign before registering */
+#ifdef CONFIG_MPLS
+	void			*mpls_ptr;	/* MPLS specific data */
+#endif
 
 /*
  * Cache lines mostly used on receive path (including eth_type_trans())

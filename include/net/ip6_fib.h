@@ -21,6 +21,10 @@
 #include <net/netlink.h>
 #include <net/inetpeer.h>
 
+#ifdef CONFIG_INET6_MPLS
+#include <net/shim.h>
+#endif
+
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
 #define FIB6_TABLE_HASHSZ 256
 #else
@@ -48,6 +52,9 @@ struct fib6_config {
 	int		fc_mx_len;
 
 	struct nl_info	fc_nlinfo;
+#ifdef CONFIG_INET6_MPLS
+    struct rtshim   *fc_shim;
+#endif
 };
 
 struct fib6_node {
@@ -116,6 +123,9 @@ struct rt6_info {
 	unsigned short			rt6i_nfheader_len;
 
 	u8				rt6i_protocol;
+#ifdef CONFIG_INET6_MPLS
+	struct shim_blk                 *rt6i_shim;
+#endif
 };
 
 static inline struct inet6_dev *ip6_dst_idev(struct dst_entry *dst)

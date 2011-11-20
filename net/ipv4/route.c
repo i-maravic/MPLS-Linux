@@ -110,6 +110,9 @@
 #include <linux/sysctl.h>
 #endif
 #include <net/secure_seq.h>
+#ifdef CONFIG_IP_MPLS
+#include <net/shim.h>
+#endif
 
 #define RT_FL_TOS(oldflp4) \
 	((oldflp4)->flowi4_tos & (IPTOS_RT_MASK | RTO_ONLINK))
@@ -950,6 +953,8 @@ void rt_cache_flush(struct net *net, int delay)
 	if (delay >= 0)
 		rt_do_flush(net, !in_softirq());
 }
+
+//EXPORT_SYMBOL(rt_cache_flush);
 
 /* Flush previous cache invalidated entries from the cache */
 void rt_cache_flush_batch(struct net *net)
@@ -1979,12 +1984,19 @@ static void rt_set_nexthop(struct rtable *rt, const struct flowi4 *fl4,
 			   struct fib_info *fi, u16 type, u32 itag)
 {
 	struct dst_entry *dst = &rt->dst;
-
+#ifdef CONFIG_IP_MPLS
+	struct shim_blk *sblk;
+#endif
+	
 	if (fi) {
 		if (FIB_RES_GW(*res) &&
 		    FIB_RES_NH(*res).nh_scope == RT_SCOPE_LINK)
 			rt->rt_gateway = FIB_RES_GW(*res);
 		rt_init_metrics(rt, fl4, fi);
+#ifdef CONFIG_IP_MPLS
+		if ((sblk = FIB_RES_SHIM(*res)))
+			sblk->shim->build(sblk, dst);
+#endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 		dst->tclassid = FIB_RES_NH(*res).nh_tclassid;
 #endif

@@ -543,6 +543,16 @@ config NETFILTER_XT_TARGET_NFLOG
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
+config NETFILTER_XT_TARGET_MPLS
+       tristate '"MPLS" target support (EXPERIMENTAL)'
+       depends on NETFILTER_XTABLES && MPLS && EXPERIMENTAL
+       help
+         This option adds a `MPLS' target, which allows you to create rules
+         which map packets to a MPLS LSP
+
+         To compile it as a module, choose M here.  If unsure, say N.
+
+
 config NETFILTER_XT_TARGET_NFQUEUE
 	tristate '"NFQUEUE" target Support'
 	depends on NETFILTER_ADVANCED

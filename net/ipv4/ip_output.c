@@ -146,7 +146,6 @@ int ip_build_and_send_pkt(struct sk_buff *skb, struct sock *sk,
 	struct inet_sock *inet = inet_sk(sk);
 	struct rtable *rt = skb_rtable(skb);
 	struct iphdr *iph;
-
 	/* Build the IP header. */
 	skb_push(skb, sizeof(struct iphdr) + (opt ? opt->opt.optlen : 0));
 	skb_reset_network_header(skb);
@@ -189,6 +188,12 @@ static inline int ip_finish_output2(struct sk_buff *skb)
 		IP_UPD_PO_STATS(dev_net(dev), IPSTATS_MIB_OUTMCAST, skb->len);
 	} else if (rt->rt_type == RTN_BROADCAST)
 		IP_UPD_PO_STATS(dev_net(dev), IPSTATS_MIB_OUTBCAST, skb->len);
+#ifdef CONFIG_IP_MPLS
+	if (dst->child) {
+		skb_dst_set(skb, skb_dst_pop(skb));
+		return dst_output(skb);
+	}
+#endif
 
 	/* Be paranoid, rather than too clever. */
 	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) {
@@ -310,7 +315,6 @@ int ip_output(struct sk_buff *skb)
 	struct net_device *dev = skb_dst(skb)->dev;
 
 	IP_UPD_PO_STATS(dev_net(dev), IPSTATS_MIB_OUT, skb->len);
-
 	skb->dev = dev;
 	skb->protocol = htons(ETH_P_IP);
 
@@ -342,7 +346,6 @@ int ip_queue_xmit(struct sk_buff *skb, struct flowi *fl)
 	struct rtable *rt;
 	struct iphdr *iph;
 	int res;
-
 	/* Skip all of this if the packet is already routed,
 	 * f.e. by something like SCTP.
 	 */

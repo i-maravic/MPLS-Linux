@@ -82,7 +82,7 @@
 #define PPP_IPV6CP	0x8057	/* IPv6 Control Protocol */
 #define PPP_CCPFRAG	0x80fb	/* CCP at link level (below MP bundle) */
 #define PPP_CCP		0x80fd	/* Compression Control Protocol */
-#define PPP_MPLSCP	0x80fd	/* MPLS Control Protocol */
+#define PPP_MPLSCP	0x8281	/* MPLS Control Protocol */
 #define PPP_LCP		0xc021	/* Link Control Protocol */
 #define PPP_PAP		0xc023	/* Password Authentication Protocol */
 #define PPP_LQR		0xc025	/* Link Quality Report protocol */

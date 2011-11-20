@@ -162,6 +162,16 @@ config BRIDGE_EBT_MARK_T
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
+config BRIDGE_EBT_MPLS
+       tristate "ebt: mpls target support (EXPERIMENTAL)"
+       depends on BRIDGE_NF_EBTABLES && MPLS && EXPERIMENTAL
+       help
+         This option adds the ebtables MPLS target which allows for
+         bridging ethernets frame onto a MPLS LSP
+
+         To compile it as a module, choose M here.  If unsure, say N.
+
+
 config BRIDGE_EBT_REDIRECT
 	tristate "ebt: redirect target support"
 	help

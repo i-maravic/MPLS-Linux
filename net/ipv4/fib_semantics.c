@@ -44,6 +44,10 @@
 #include <net/netlink.h>
 #include <net/nexthop.h>
 
+#ifdef CONFIG_IP_MPLS
+#include <net/shim.h>
+#endif
+
 #include "fib_lookup.h"
 
 static DEFINE_SPINLOCK(fib_info_lock);
@@ -158,9 +162,16 @@ void free_fib_info(struct fib_info *fi)
 		return;
 	}
 	change_nexthops(fi) {
+#ifdef CONFIG_IP_MPLS
+		if (nexthop_nh->nh_shim)
+            shim_destroy_blk(nexthop_nh->nh_shim);
+#endif
 		if (nexthop_nh->nh_dev)
 			dev_put(nexthop_nh->nh_dev);
 		nexthop_nh->nh_dev = NULL;
+#ifdef CONFIG_IP_MPLS
+		nexthop_nh->nh_shim = NULL;
+#endif
 	} endfor_nexthops(fi);
 	fib_info_cnt--;
 	release_net(fi->fib_net);
@@ -198,6 +209,9 @@ static inline int nh_comp(const struct fib_info *fi, const struct fib_info *ofi)
 #endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 		    nh->nh_tclassid != onh->nh_tclassid ||
+#endif
+#ifdef CONFIG_IP_MPLS
+			shim_blk_cmp(nh->nh_shim, onh->nh_shim) ||
 #endif
 		    ((nh->nh_flags ^ onh->nh_flags) & ~RTNH_F_DEAD))
 			return -1;
@@ -423,6 +437,10 @@ static int fib_get_nhs(struct fib_info *fi, struct rtnexthop *rtnh,
 			nla = nla_find(attrs, attrlen, RTA_FLOW);
 			nexthop_nh->nh_tclassid = nla ? nla_get_u32(nla) : 0;
 #endif
+#ifdef CONFIG_IP_MPLS
+			nla = nla_find(attrs, attrlen, RTA_SHIM);
+			nexthop_nh->nh_shim = nla ? shim_build_blk(nla_data(nla)):NULL;
+#endif
 		}
 
 		rtnh = rtnh_next(rtnh, &remaining);
@@ -445,6 +463,9 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 
 	if (cfg->fc_oif || cfg->fc_gw) {
 		if ((!cfg->fc_oif || cfg->fc_oif == fi->fib_nh->nh_oif) &&
+#ifdef CONFIG_IP_MPLS
+			(!cfg->fc_shim || !cfg->fc_shim->datalen || shim_cfg_blk_cmp(cfg->fc_shim, fi->fib_nh->nh_shim) == 0) &&
+#endif
 		    (!cfg->fc_gw  || cfg->fc_gw == fi->fib_nh->nh_gw))
 			return 0;
 		return 1;
@@ -476,6 +497,11 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 #ifdef CONFIG_IP_ROUTE_CLASSID
 			nla = nla_find(attrs, attrlen, RTA_FLOW);
 			if (nla && nla_get_u32(nla) != nh->nh_tclassid)
+				return 1;
+#endif
+#ifdef CONFIG_IP_MPLS
+			nla = nla_find(attrs, attrlen, RTA_SHIM);
+			if (nla && shim_cfg_blk_cmp(nla_data(nla), nh->nh_shim))
 				return 1;
 #endif
 		}
@@ -796,6 +822,10 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 			goto err_inval;
 		if (cfg->fc_gw && fi->fib_nh->nh_gw != cfg->fc_gw)
 			goto err_inval;
+#ifdef CONFIG_IP_MPLS
+		if (cfg->fc_shim && cfg->fc_shim->datalen  && shim_cfg_blk_cmp(cfg->fc_shim, fi->fib_nh->nh_shim))
+			goto err_inval;
+#endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 		if (cfg->fc_flow && fi->fib_nh->nh_tclassid != cfg->fc_flow)
 			goto err_inval;
@@ -815,10 +845,21 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 		nh->nh_weight = 1;
 #endif
+#ifdef CONFIG_IP_MPLS
+		if (cfg->fc_shim && cfg->fc_shim->datalen) {
+			nh->nh_shim = shim_build_blk(cfg->fc_shim);
+			if (!nh->nh_shim)
+				goto err_inval;
+		}
+#endif
 	}
 
 	if (fib_props[cfg->fc_type].error) {
-		if (cfg->fc_gw || cfg->fc_oif || cfg->fc_mp)
+		if (cfg->fc_gw || cfg->fc_oif || cfg->fc_mp
+#ifdef CONFIG_IP_MPLS
+		 || cfg->fc_shim || cfg->fc_shim->datalen
+#endif
+		 )
 			goto err_inval;
 		goto link_it;
 	} else {
@@ -960,6 +1001,17 @@ int fib_dump_info(struct sk_buff *skb, u32 pid, u32 seq, int event,
 		if (fi->fib_nh[0].nh_tclassid)
 			NLA_PUT_U32(skb, RTA_FLOW, fi->fib_nh[0].nh_tclassid);
 #endif
+#ifdef CONFIG_IP_MPLS
+		if (fi->fib_nh->nh_shim) {
+			struct nlattr *nla = nla_reserve(skb, RTA_SHIM,
+					sizeof(struct rtshim) +
+					fi->fib_nh->nh_shim->datalen);
+			struct rtshim *shim = nla_data(nla);
+			if (nla == NULL)
+					goto nla_put_failure;
+	         shim_unbuild_blk(shim, fi->fib_nh->nh_shim);
+		}
+#endif
 	}
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 	if (fi->fib_nhs > 1) {
@@ -985,6 +1037,18 @@ int fib_dump_info(struct sk_buff *skb, u32 pid, u32 seq, int event,
 			if (nh->nh_tclassid)
 				NLA_PUT_U32(skb, RTA_FLOW, nh->nh_tclassid);
 #endif
+#ifdef CONFIG_IP_MPLS
+			if (nh->nh_shim) {
+				struct nlattr *nla = nla_reserve(skb, RTA_SHIM,
+					sizeof(struct rtshim) +
+					nh->nh_shim->datalen);
+				struct rtshim *shim = nla_data(nla);
+				if (nla == NULL)
+					goto nla_put_failure;
+		        shim_unbuild_blk(shim, nh->nh_shim);
+			}
+#endif
+
 			/* length of rtnetlink header + attributes */
 			rtnh->rtnh_len = nlmsg_get_pos(skb) - (void *) rtnh;
 		} endfor_nexthops(fi);
