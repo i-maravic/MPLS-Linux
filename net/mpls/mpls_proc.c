@@ -9,7 +9,7 @@
  *
  * Authors:
  *          James Leu        <jleu@mindspring.com>
- *			Igor MaraviÄ	 <igorm@etf.rs> 
+ *			Igor Maravić	 <igorm@etf.rs> 
  *
  *      This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License

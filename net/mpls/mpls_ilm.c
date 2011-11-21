@@ -6,7 +6,7 @@
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
- *          Igor MaraviÄ     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
+ *          Igor Maravić     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
  *
  *   (c) 1999-2004   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
@@ -801,7 +801,7 @@ int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq, int pid)
 	mi = mpls_instr_getlast(ilm->ilm_instr);
 
 	if (!mi || mi->mi_opcode != MPLS_OP_FWD) {
-		MPLS_DEBUG("opcode not found!\n");
+		MPLS_DEBUG("opcode FWD not found!\n");
 		ret = -ENXIO;
 		goto out_release;
 	}

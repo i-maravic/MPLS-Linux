@@ -16,7 +16,7 @@
  * Authors:
  *   (c) 1999-2005   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr> 
- *   (c) 2011        Igor Maravic     <igorm@etf.rs>
+ *   (c) 2011        Igor Maravić     <igorm@etf.rs>
  *
  *      This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License

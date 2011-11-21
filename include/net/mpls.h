@@ -8,7 +8,7 @@
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
- *          Igor Maravic     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
+ *          Igor Maravić     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
  *
  *   (c) 1999-2004   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
@@ -328,14 +328,10 @@ struct mpls_nhlfe {
 
 	/* List of notif*/
 	struct notifier_block*  nhlfe_notifier_list;
-	/* List of NHLFE that are linked to this NHLFE*/
-	struct list_head        list_out;
 	/* List of ILM that are linked to this NHLFE*/
 	struct list_head        list_in;
 	/* To be added into a device list_out if the NHLFE uses (SET) the dev */
 	struct list_head        dev_entry;
-	/* To be added into list_out if this nhlfe uses (FWD) another NHLFE*/
-	struct list_head        nhlfe_entry;
 	/* Array of instructions for this NHLFE*/
 	struct mpls_instr      *nhlfe_instr;
 	/* Key used to store/lookup a given NHLFE in the tree*/

@@ -6,7 +6,7 @@
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
- *          Igor MaraviÄ     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
+ *          Igor Maravić     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
  *
  *   (c) 1999-2004   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
@@ -103,7 +103,7 @@ static int mpls_release_netdev_in_ilm(struct net_device *dev)
 	MPLS_ENTER;
 	/* Iterate all ILM objects present in the list_in of the interface.*/
 	list_for_each_safe(pos,tmp,&mif->list_in) {
-		holder = list_entry(pos, struct mpls_ilm,dev_entry);
+		holder = list_entry(pos, struct mpls_ilm, dev_entry);
 
 		/* Destroy the instruction list */
 		mpls_del_ilm(holder,0,0);
@@ -173,8 +173,8 @@ static int mpls_netdev_event(struct notifier_block *this, unsigned long event, v
 	switch (event) {
 	case NETDEV_UNREGISTER:
 	case NETDEV_DOWN:
-		mpls_release_netdev_in_nhlfe(dev);
 		mpls_release_netdev_in_ilm(dev);
+		mpls_release_netdev_in_nhlfe(dev);
 		break;
 	case NETDEV_CHANGEMTU:
 		mpls_change_mtu_nhlfe(dev);
