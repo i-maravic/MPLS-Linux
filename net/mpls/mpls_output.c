@@ -6,7 +6,7 @@
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
- *          Igor MaraviÄ     <igorm@etf.rs> - Innovational Centre of School of Electrical Engineering, Belgrade
+ *          Igor Maravić     <igorm@etf.rs> - Innovational Centre of School of Electrical Engineering, Belgrade
  *
  *   (c) 1999-2004   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
@@ -101,8 +101,6 @@ static inline int mpls_finish_output(struct sk_buff *skb, struct mpls_nhlfe *nhl
 
 	MPLS_ENTER;
 
-/* Support of recursive output */
-mpls_output2_start:
 	ready_to_tx = 0;
 
 	if (skb_cow_head(skb, skb_dst(skb)->header_len) < 0) {
@@ -128,11 +126,10 @@ mpls_output2_start:
 				if(ready_to_tx)
 					goto send;
 				break;
-			case MPLS_RESULT_FWD:
-				goto mpls_output2_start;
 			case MPLS_RESULT_DROP:
 				printk(KERN_DEBUG "FWD F'ed up instruction!\n");
 				goto out_drop;
+			case MPLS_RESULT_FWD:
 			case MPLS_RESULT_RECURSE:
 			case MPLS_RESULT_DLV:
 				/* Invalid on OUTPUT */
@@ -140,11 +137,7 @@ mpls_output2_start:
 			}
 		}
 	}
-
-	/* The control plane should have left the opcodes in a coherent
-	   state. The last one should have enabled tx. */
-	if (unlikely(!ready_to_tx))
-		goto out_drop;
+	goto out_drop;
 
 send:
 	if (skb->len > dev->mtu) {

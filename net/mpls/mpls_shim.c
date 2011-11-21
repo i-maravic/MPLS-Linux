@@ -5,7 +5,7 @@
  *
  * Authors:
  *          James Leu        <jleu@mindspring.com>
- *			Igor MaraviÄ     <igorm@etf.rs> 
+ *			Igor Maravić     <igorm@etf.rs> 
  *
  *   (c) 1999-2005   James Leu        <jleu@mindspring.com>
  *

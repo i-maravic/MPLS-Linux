@@ -6,7 +6,7 @@
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
- *          Igor MaraviÄ	 <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
+ *          Igor Maravić	 <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
  *   (c) 1999-2004   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
  *

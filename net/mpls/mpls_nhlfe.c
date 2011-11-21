@@ -10,7 +10,7 @@
  * Authors:
  *      James Leu        <jleu@mindspring.com>
  *      Ramon Casellas   <casellas@infres.enst.fr>
- *      Igor MaraviÄ     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
+ *      Igor Maravić     <igorm@etf.rs> - Innovation Center, School of Electrical Engineering in Belgrade
  *
  *   (c) 1999-2004   James Leu <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas <casellas@infres.enst.fr>
@@ -197,9 +197,7 @@ struct mpls_nhlfe *nhlfe_dst_alloc(unsigned int key)
 	nhlfe->dst.input = mpls_switch;
 	nhlfe->dst.output = mpls_output;
 
-	INIT_LIST_HEAD(&nhlfe->list_out);
 	INIT_LIST_HEAD(&nhlfe->list_in);
-	INIT_LIST_HEAD(&nhlfe->nhlfe_entry);
 	INIT_LIST_HEAD(&nhlfe->dev_entry);
 	INIT_LIST_HEAD(&nhlfe->global);
 
@@ -417,7 +415,7 @@ struct mpls_nhlfe *mpls_get_nhlfe_label(struct mpls_out_label_req *mol)
 
 struct mpls_nhlfe *mpls_add_out_label(struct mpls_out_label_req *out)
 {
-	struct mpls_nhlfe *nhlfe = NULL; 
+	struct mpls_nhlfe *nhlfe = NULL;
 	unsigned int key = 0;
 
 	MPLS_ENTER;
@@ -463,66 +461,9 @@ struct mpls_nhlfe *mpls_add_out_label(struct mpls_out_label_req *out)
 }
 
 /**
- *	mpls_del_out_label - Remove a NHLFE from the tree
- *	@out: request.
- **/
-
-int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
-{
-	struct mpls_nhlfe *nhlfe = NULL;
-	unsigned int key;
-	int retval;
-
-	MPLS_ENTER;
-
-	key = mpls_label2key(0, &out->mol_label);
-
-	nhlfe = mpls_get_nhlfe(key);
-	if (unlikely(!nhlfe)) {
-		MPLS_DEBUG("Node %u was not in tree\n",key);
-		MPLS_EXIT;
-		return  -ESRCH;
-	}
-
-	/*
-	 * This code starts the process of removing a NHLFE from the
-	 * system.  The first thing we we do it remove it from the tree
-	 * so no one else can get a reference to it.  Then we notify the
-	 * higher layer protocols that they should give up thier references
-	 * soon (does not need to happen immediatly, the dst system allows
-	 * for this.
-	 */
-
-	/* remove the NHLFE from the tree */
-	mpls_remove_nhlfe(nhlfe->nhlfe_key);
-
-	/* Remove reference taken on mpls_get_nhlfe() */
-	mpls_nhlfe_release(nhlfe);
-
-	/* From now on, drop packets */
-	nhlfe->dst.output = dst_discard;
-
-	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
-
-	/* Destroy the instructions on this NHLFE, so as to no longer
-	 * hold refs to interfaces and other NHLFE's. */
-	mpls_destroy_nhlfe_instrs(nhlfe);
-
-	/* schedule all higher layer protocols to give up their references */
-	mpls_proto_cache_flush_all(&init_net);
-
-	/* Let the dst system know we're done with this NHLFE */
-	mpls_nhlfe_drop(nhlfe);
-
-	MPLS_EXIT;
-	return retval;
-}
-
-/**
  *	mpls_del_nhlfe - Remove a NHLFE from the tree
  *	@nhlfe: nhlfe entry to delete
  **/
-
 int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
 {
 	int retval;
@@ -565,6 +506,124 @@ int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
 	return retval;
 }
 
+/*
+ * mpls_nhlfe_del_list_in - changes FWD to PEEK in all ilms in the list
+ * @nhlfe:  nhlfe holding the list_in
+ *
+ */
+static void mpls_nhlfe_del_list_in(struct mpls_nhlfe *nhlfe)
+{
+	struct list_head *nhlfe_in = &nhlfe->list_in;
+	struct list_head *pos = NULL;
+	struct list_head *tmp = NULL;
+	struct mpls_ilm *holder;
+	MPLS_ENTER;
+	/* Iterate all ILM objects present in the list_in of the nhlfe.*/
+	list_for_each_safe(pos,tmp,nhlfe_in) {
+		struct mpls_instr *mi  = NULL;
+
+		holder = list_entry(pos, struct mpls_ilm, nhlfe_entry);
+
+		mpls_ilm_hold(holder);
+
+		/*detach in to out */
+		/* Check that there is an instruction set! */
+		if (unlikely(!holder->ilm_instr)) {
+			MPLS_DEBUG("No instruction Set!");
+			goto del;
+		}
+
+		/* Fetch the last instr, make sure it is FWD*/
+		mi = mpls_instr_getlast(holder->ilm_instr);
+
+		if (!mi || mi->mi_opcode != MPLS_OP_FWD) {
+			MPLS_DEBUG("opcode FWD not found!\n");
+			goto del;
+		}
+
+		/* Make sure it is the good nhlfe */
+		if (!mi->mi_data || nhlfe->nhlfe_key != _mpls_as_nhlfe(mi->mi_data)->nhlfe_key) {
+			/* Do not release the NHLFE, it was invalid */
+			MPLS_DEBUG("Invalid NHLFE  %u\n",_mpls_as_nhlfe(mi->mi_data)->nhlfe_key);
+			goto del;
+		}
+
+		/* The new last opcode for this ILM is now peek */
+		mi->mi_opcode = MPLS_OP_PEEK;
+		/* With no data */
+		mi->mi_data = NULL;
+del:
+		/* Even if there are errors release nhlfe - 
+		 * if __refcnt is less then 0 we will have warning, 
+		 * but at least nhlfe is going to be deleted
+		 */
+		mpls_nhlfe_release(nhlfe);
+		mpls_ilm_release(holder);
+		list_del(pos);
+	}
+	MPLS_EXIT;
+}
+
+/**
+ *	mpls_del_out_label - Remove a NHLFE from the tree
+ *	@out: request.
+ **/
+
+int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
+{
+	struct mpls_nhlfe *nhlfe = NULL;
+	unsigned int key;
+	int retval;
+
+	MPLS_ENTER;
+
+	key = mpls_label2key(0, &out->mol_label);
+
+	nhlfe = mpls_get_nhlfe(key);
+	if (unlikely(!nhlfe)) {
+		MPLS_DEBUG("Node %u was not in tree\n",key);
+		MPLS_EXIT;
+		return  -ESRCH;
+	}
+
+	/*
+	 * This code starts the process of removing a NHLFE from the
+	 * system.  The first thing we we do it remove it from the tree
+	 * so no one else can get a reference to it.  Then we notify the
+	 * higher layer protocols that they should give up thier references
+	 * soon (does not need to happen immediatly, the dst system allows
+	 * for this.
+	 */
+
+	/*
+	 * Clean ilms and nhlfes holding this nhlfe
+	 */
+	mpls_nhlfe_del_list_in(nhlfe);
+
+	/* remove the NHLFE from the tree */
+	mpls_remove_nhlfe(nhlfe->nhlfe_key);
+
+	/* Remove reference taken on mpls_get_nhlfe() */
+	mpls_nhlfe_release(nhlfe);
+
+	/* From now on, drop packets */
+	nhlfe->dst.output = dst_discard;
+
+	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
+
+	/* Destroy the instructions on this NHLFE, so as to no longer
+	 * hold refs to interfaces and other NHLFE's. */
+	mpls_destroy_nhlfe_instrs(nhlfe);
+
+	/* schedule all higher layer protocols to give up their references */
+	mpls_proto_cache_flush_all(&init_net);
+
+	/* Let the dst system know we're done with this NHLFE */
+	mpls_nhlfe_drop(nhlfe);
+
+	MPLS_EXIT;
+	return retval;
+}
 
 /**
  * mpls_set_out_label_mtu - change the MTU for this NHLFE.

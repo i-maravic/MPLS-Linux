@@ -6,7 +6,7 @@
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
- *          Igor MaraviÄ     <igorm@etf.rs> - Innovational Centre of School of Electrical Engineering, Belgrade
+ *          Igor Maravić     <igorm@etf.rs> - Innovational Centre of School of Electrical Engineering, Belgrade
  *   (c) 1999-2004   James Leu        <jleu@mindspring.com>
  *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
  *
@@ -351,9 +351,16 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_fwd)
 MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_fwd)
 {
 	struct mpls_nhlfe *nhlfe = NULL;
+	struct mpls_ilm *pilm;
 	unsigned int key = 0;
 
 	MPLS_ENTER;
+	if (direction != MPLS_IN) {
+		MPLS_DEBUG("FWD only valid for incoming labels\n");
+		MPLS_EXIT;
+		return -EINVAL;
+	}
+
 	*data = NULL; 
 	/* 
 	 * Get NHLFE to apply given key
@@ -366,24 +373,9 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_fwd)
 		return -ESRCH;
 	}
 
-	if (direction == MPLS_OUT) {
-		struct mpls_nhlfe *pnhlfe = _mpls_as_nhlfe(parent);
-
-		/*check that it doesn't forward packet to itself*/
-		if(unlikely(pnhlfe->nhlfe_key==key)){
-			MPLS_DEBUG("FWD: Can't forward to it self (%08x)\n",key);
-			MPLS_EXIT;
-			return -ESRCH;
-		}
-
-		mpls_nhlfe_update_mtu(pnhlfe, dst_mtu(&nhlfe->dst));
-		/* Add parent NHLFE to this NHLFE list */
-		list_add(&pnhlfe->nhlfe_entry, &nhlfe->list_out);
-	} else {
-		struct mpls_ilm *pilm = _mpls_as_ilm(parent);
-		/* Add parent ILM to this NHLFE list */
-		list_add(&pilm->nhlfe_entry, &nhlfe->list_in);
-	}
+	pilm = _mpls_as_ilm(parent);
+	/* Add parent ILM to this NHLFE list */
+	list_add(&pilm->nhlfe_entry, &nhlfe->list_in);
 
 	*data = nhlfe;
 	*last_able = 1;
@@ -408,14 +400,8 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_fwd)
 MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_fwd)
 {
 	MPLS_ENTER;
-	if (direction == MPLS_IN) {
-		/* Remove parent NHLFE from this NHLFE list */
-		mpls_list_del_init(&_mpls_as_ilm(parent)->nhlfe_entry);
-	} else {
-		/* Remove parent NHLFE from this NHLFE list */
-		mpls_list_del_init(&_mpls_as_nhlfe(parent)->nhlfe_entry);
-	}
-
+	/* Remove parent NHLFE from this NHLFE list */
+	mpls_list_del_init(&_mpls_as_ilm(parent)->nhlfe_entry);
 	mpls_nhlfe_release(_mpls_as_nhlfe(data)); 
 	MPLS_EXIT;
 }
@@ -1735,7 +1721,7 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 	},
 	[MPLS_OP_FWD] = {
 			.in      = mpls_op_fwd,
-			.out     = mpls_op_fwd,
+			.out     = NULL,
 			.build   = mpls_build_opcode_fwd,
 			.unbuild = mpls_unbuild_opcode_fwd,
 			.cleanup = mpls_clean_opcode_fwd,

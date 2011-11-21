@@ -1,7 +1,7 @@
 /* This is a module which is used for redirecting packets into MPLS land. */
 
 /* (C) 1999-2007 James R. Leu <jleu@mindspring.com>
- *	edited by Igor MaraviÄ <igorm@etf.rs>
+ *	edited by Igor Maravić <igorm@etf.rs>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
