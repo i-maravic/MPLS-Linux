@@ -155,7 +155,7 @@ int ipv6_sock_mc_join(struct sock *sk, int ifindex, const struct in6_addr *addr)
 		return -ENOMEM;
 
 	mc_lst->next = NULL;
-	ipv6_addr_copy(&mc_lst->addr, addr);
+	mc_lst->addr = *addr;
 
 	rcu_read_lock();
 	if (ifindex == 0) {
@@ -858,7 +858,7 @@ int ipv6_dev_mc_inc(struct net_device *dev, const struct in6_addr *addr)
 
 	setup_timer(&mc->mca_timer, igmp6_timer_handler, (unsigned long)mc);
 
-	ipv6_addr_copy(&mc->mca_addr, addr);
+	mc->mca_addr = *addr;
 	mc->idev = idev; /* (reference taken) */
 	mc->mca_users = 1;
 	/* mca_stamp should be updated upon changes */
@@ -1343,13 +1343,15 @@ static struct sk_buff *mld_newpack(struct net_device *dev, int size)
 	struct mld2_report *pmr;
 	struct in6_addr addr_buf;
 	const struct in6_addr *saddr;
+	int hlen = LL_RESERVED_SPACE(dev);
+	int tlen = dev->needed_tailroom;
 	int err;
 	u8 ra[8] = { IPPROTO_ICMPV6, 0,
 		     IPV6_TLV_ROUTERALERT, 2, 0, 0,
 		     IPV6_TLV_PADN, 0 };
 
 	/* we assume size > sizeof(ra) here */
-	size += LL_ALLOCATED_SPACE(dev);
+	size += hlen + tlen;
 	/* limit our allocations to order-0 page */
 	size = min_t(int, size, SKB_MAX_ORDER(0, 0));
 	skb = sock_alloc_send_skb(sk, size, 1, &err);
@@ -1357,7 +1359,7 @@ static struct sk_buff *mld_newpack(struct net_device *dev, int size)
 	if (!skb)
 		return NULL;
 
-	skb_reserve(skb, LL_RESERVED_SPACE(dev));
+	skb_reserve(skb, hlen);
 
 	if (ipv6_get_lladdr(dev, &addr_buf, IFA_F_TENTATIVE)) {
 		/* <draft-ietf-magma-mld-source-05.txt>:
@@ -1723,6 +1725,8 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
 	struct mld_msg *hdr;
 	const struct in6_addr *snd_addr, *saddr;
 	struct in6_addr addr_buf;
+	int hlen = LL_RESERVED_SPACE(dev);
+	int tlen = dev->needed_tailroom;
 	int err, len, payload_len, full_len;
 	u8 ra[8] = { IPPROTO_ICMPV6, 0,
 		     IPV6_TLV_ROUTERALERT, 2, 0, 0,
@@ -1744,7 +1748,7 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
 		      IPSTATS_MIB_OUT, full_len);
 	rcu_read_unlock();
 
-	skb = sock_alloc_send_skb(sk, LL_ALLOCATED_SPACE(dev) + full_len, 1, &err);
+	skb = sock_alloc_send_skb(sk, hlen + tlen + full_len, 1, &err);
 
 	if (skb == NULL) {
 		rcu_read_lock();
@@ -1754,7 +1758,7 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
 		return;
 	}
 
-	skb_reserve(skb, LL_RESERVED_SPACE(dev));
+	skb_reserve(skb, hlen);
 
 	if (ipv6_get_lladdr(dev, &addr_buf, IFA_F_TENTATIVE)) {
 		/* <draft-ietf-magma-mld-source-05.txt>:
@@ -1772,7 +1776,7 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
 	hdr = (struct mld_msg *) skb_put(skb, sizeof(struct mld_msg));
 	memset(hdr, 0, sizeof(struct mld_msg));
 	hdr->mld_type = type;
-	ipv6_addr_copy(&hdr->mld_mca, addr);
+	hdr->mld_mca = *addr;
 
 	hdr->mld_cksum = csum_ipv6_magic(saddr, snd_addr, len,
 					 IPPROTO_ICMPV6,

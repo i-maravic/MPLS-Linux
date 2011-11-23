@@ -189,6 +189,13 @@ static void clip_push(struct atm_vcc *vcc, struct sk_buff *skb)
 	struct clip_vcc *clip_vcc = CLIP_VCC(vcc);
 
 	pr_debug("\n");
+
+	if (!clip_devs) {
+		atm_return(vcc, skb->truesize);
+		kfree_skb(skb);
+		return;
+	}
+
 	if (!skb) {
 		pr_debug("removing VCC %p\n", clip_vcc);
 		if (clip_vcc->entry)
@@ -448,10 +455,7 @@ static netdev_tx_t clip_start_xmit(struct sk_buff *skb,
 
 static int clip_mkip(struct atm_vcc *vcc, int timeout)
 {
-	struct sk_buff_head *rq, queue;
 	struct clip_vcc *clip_vcc;
-	struct sk_buff *skb, *tmp;
-	unsigned long flags;
 
 	if (!vcc->push)
 		return -EBADFD;
@@ -472,29 +476,9 @@ static int clip_mkip(struct atm_vcc *vcc, int timeout)
 	vcc->push = clip_push;
 	vcc->pop = clip_pop;
 
-	__skb_queue_head_init(&queue);
-	rq = &sk_atm(vcc)->sk_receive_queue;
-
-	spin_lock_irqsave(&rq->lock, flags);
-	skb_queue_splice_init(rq, &queue);
-	spin_unlock_irqrestore(&rq->lock, flags);
-
 	/* re-process everything received between connection setup and MKIP */
-	skb_queue_walk_safe(&queue, skb, tmp) {
-		if (!clip_devs) {
-			atm_return(vcc, skb->truesize);
-			kfree_skb(skb);
-		} else {
-			struct net_device *dev = skb->dev;
-			unsigned int len = skb->len;
+	vcc_process_recv_queue(vcc);
 
-			skb_get(skb);
-			clip_push(vcc, skb);
-			dev->stats.rx_packets--;
-			dev->stats.rx_bytes -= len;
-			kfree_skb(skb);
-		}
-	}
 	return 0;
 }
 

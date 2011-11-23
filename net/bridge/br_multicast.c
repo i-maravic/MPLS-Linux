@@ -127,7 +127,7 @@ static struct net_bridge_mdb_entry *br_mdb_ip6_get(
 {
 	struct br_ip br_dst;
 
-	ipv6_addr_copy(&br_dst.u.ip6, dst);
+	br_dst.u.ip6 = *dst;
 	br_dst.proto = htons(ETH_P_IPV6);
 
 	return br_mdb_ip_get(mdb, &br_dst);
@@ -154,7 +154,7 @@ struct net_bridge_mdb_entry *br_mdb_get(struct net_bridge *br,
 		break;
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	case htons(ETH_P_IPV6):
-		ipv6_addr_copy(&ip.u.ip6, &ipv6_hdr(skb)->daddr);
+		ip.u.ip6 = ipv6_hdr(skb)->daddr;
 		break;
 #endif
 	default:
@@ -474,7 +474,7 @@ static struct sk_buff *br_ip6_multicast_alloc_query(struct net_bridge *br,
 	mldq->mld_cksum = 0;
 	mldq->mld_maxdelay = htons((u16)jiffies_to_msecs(interval));
 	mldq->mld_reserved = 0;
-	ipv6_addr_copy(&mldq->mld_mca, group);
+	mldq->mld_mca = *group;
 
 	/* checksum */
 	mldq->mld_cksum = csum_ipv6_magic(&ip6h->saddr, &ip6h->daddr,
@@ -783,7 +783,7 @@ static int br_ip6_multicast_add_group(struct net_bridge *br,
 	if (!ipv6_is_transient_multicast(group))
 		return 0;
 
-	ipv6_addr_copy(&br_group.u.ip6, group);
+	br_group.u.ip6 = *group;
 	br_group.proto = htons(ETH_P_IPV6);
 
 	return br_multicast_add_group(br, port, &br_group);
@@ -1344,7 +1344,7 @@ static void br_ip6_multicast_leave_group(struct net_bridge *br,
 	if (!ipv6_is_transient_multicast(group))
 		return;
 
-	ipv6_addr_copy(&br_group.u.ip6, group);
+	br_group.u.ip6 = *group;
 	br_group.proto = htons(ETH_P_IPV6);
 
 	br_multicast_leave_group(br, port, &br_group);
@@ -1501,6 +1501,8 @@ static int br_multicast_ipv6_rcv(struct net_bridge *br,
 
 	__skb_pull(skb2, offset);
 	skb_reset_transport_header(skb2);
+	skb_postpull_rcsum(skb2, skb_network_header(skb2),
+			   skb_network_header_len(skb2));
 
 	icmp6_type = icmp6_hdr(skb2)->icmp6_type;
 
@@ -1770,7 +1772,7 @@ int br_multicast_toggle(struct net_bridge *br, unsigned long val)
 	int err = 0;
 	struct net_bridge_mdb_htable *mdb;
 
-	spin_lock(&br->multicast_lock);
+	spin_lock_bh(&br->multicast_lock);
 	if (br->multicast_disabled == !val)
 		goto unlock;
 
@@ -1806,7 +1808,7 @@ rollback:
 	}
 
 unlock:
-	spin_unlock(&br->multicast_lock);
+	spin_unlock_bh(&br->multicast_lock);
 
 	return err;
 }
