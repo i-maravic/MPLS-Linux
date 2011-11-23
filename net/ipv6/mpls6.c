@@ -122,7 +122,7 @@ static inline int mpls6_nexthop_resolve(struct dst_entry *dst, struct sockaddr *
 		dst_set_neighbour(dst, neigh_clone(dst_get_neighbour(ndst)));
 		rcu_read_unlock();
 	}
-	
+
 	dst_release(ndst);
 
 	return err;
@@ -165,7 +165,7 @@ static int __init mpls6_init(void)
 	instr[1].mir_direction = MPLS_IN;
 	instr[1].mir_opcode    = MPLS_OP_PEEK;
 
-	ilm = mpls_ilm_dst_alloc(0, &ml, &mpls6_driver, instr, 2);
+	ilm = mpls_ilm_alloc(0, &ml, instr, 2);
 	if (!ilm)
 		return -ENOMEM;
 
@@ -181,7 +181,7 @@ static int __init mpls6_init(void)
 static void __exit mpls6_fini(void)
 {
 	struct mpls_ilm *ilm = mpls_del_reserved_label(MPLS_IPV6_EXPLICIT_NULL);
-	mpls_ilm_drop(ilm);
+	mpls_ilm_release(ilm);
 
 	mpls_proto_remove(&mpls6_driver);
 

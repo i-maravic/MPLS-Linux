@@ -75,7 +75,6 @@ static int mpls_fill_ilm(struct sk_buff *skb, struct mpls_ilm *ilm,
 	if (unlikely(!instr))
 		goto nla_put_failure;
 
-	mil.mil_proto = ilm->ilm_proto->family;
 	memcpy(&mil.mil_label, &ilm->ilm_label, sizeof(struct mpls_label));
 	mpls_instrs_unbuild(ilm->ilm_instr, instr);
 	instr->mir_direction = MPLS_IN;
@@ -198,9 +197,6 @@ static int genl_mpls_ilm_new(struct sk_buff *skb, struct genl_info *info)
 	if (instr && mil->mil_change_flag & MPLS_CHANGE_INSTR)
 		retval = mpls_ilm_set_instrs(mil, instr->mir_instr, instr->mir_instr_length);
 		/* JLEU: should revert to old instr on failure */
-
-	if (!retval && mil->mil_change_flag & MPLS_CHANGE_PROTO)
-		retval = mpls_set_in_label_proto(mil);
 
 	if(!retval){
 		mpls_dump_ilm_event(mil,info->snd_seq, info->snd_pid);

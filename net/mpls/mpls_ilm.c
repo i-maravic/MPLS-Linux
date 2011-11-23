@@ -37,94 +37,7 @@ DEFINE_SPINLOCK(mpls_ilm_lock);
 
 LIST_HEAD(mpls_ilm_list);
 
-/* forward declarations */
-static struct dst_entry *ilm_dst_check(struct dst_entry *dst, __u32 cookie);
-static unsigned int      ilm_dst_default_advmss(const struct dst_entry *dst);
-static unsigned int      ilm_dst_default_mtu(const struct dst_entry *dst);
-static void              ilm_dst_destroy(struct dst_entry *dst);
-static struct dst_entry *ilm_dst_negative_advice(struct dst_entry *dst);
-static void              ilm_dst_link_failure(struct sk_buff *skb);
-static void              ilm_dst_update_pmtu(struct dst_entry *dst, u32 mtu);
-static int               ilm_dst_gc(struct dst_ops *ops);
-
-static struct dst_ops ilm_dst_ops = {
-	.family          =  AF_MPLS,
-	.protocol        = cpu_to_be16(ETH_P_MPLS_UC),
-	.gc              = ilm_dst_gc,
-	.check           = ilm_dst_check,
-	.default_advmss  = ilm_dst_default_advmss,
-	.default_mtu     = ilm_dst_default_mtu,
-	.destroy         = ilm_dst_destroy,
-	.negative_advice = ilm_dst_negative_advice,
-	.link_failure    = ilm_dst_link_failure,
-	.update_pmtu     = ilm_dst_update_pmtu,
-	.cow_metrics     = dst_cow_metrics_generic,
-};
-
-static struct dst_entry *ilm_dst_check(struct dst_entry *dst, __u32 cookie)
-{
-	MPLS_ENTER;
-	MPLS_EXIT;
-	return NULL;
-}
-
-static unsigned int ilm_dst_default_advmss(const struct dst_entry *dst)
-{
-	unsigned int advmss = dst_metric_raw(dst, RTAX_ADVMSS);
-	MPLS_DEBUG("ILM default advmss %u\n", advmss);
-	return advmss;
-}
-
-static unsigned int ilm_dst_default_mtu(const struct dst_entry *dst)
-{
-	unsigned int mtu = dst->dev->mtu;
-	MPLS_DEBUG("ILM default mtu %u\n", mtu);
-	return mtu;
-}
-
-/**
- *      ilm_dst_destroy - cleanup for a MPLS dst_entry
- *      @dst: 'this', object that is being destroyed.
- *
- *      The object ends life here. Perform the necessary
- *      clean up.
- **/
-
-static void ilm_dst_destroy(struct dst_entry *dst)
-{
-	struct mpls_ilm *ilm = container_of(dst, struct mpls_ilm, dst);
-	MPLS_ENTER;
-
-	mpls_proto_release(&ilm->ilm_proto);
-	dst_destroy_metrics_generic(dst);
-	MPLS_EXIT;
-}
-
-static struct dst_entry *ilm_dst_negative_advice(struct dst_entry *dst)
-{
-	MPLS_ENTER;
-	MPLS_EXIT;
-	return NULL;
-}
-
-static void ilm_dst_link_failure(struct sk_buff *skb)
-{
-	MPLS_ENTER;
-	MPLS_EXIT;
-}
-
-static void ilm_dst_update_pmtu(struct dst_entry *dst, u32 mtu)
-{
-	MPLS_ENTER;
-	MPLS_EXIT;
-}
-
-static int ilm_dst_gc(struct dst_ops *ops)
-{
-	MPLS_ENTER;
-	MPLS_EXIT;
-	return 0;
-}
+static struct kmem_cache *ilm_cachep;
 
 /**
  *	mpls_destroy_ilm_instrs - Destroy ILM opcodes.
@@ -159,9 +72,12 @@ void mpls_destroy_ilm_instrs(struct mpls_ilm *ilm)
 int mpls_ilm_set_instrs(struct mpls_in_label_req *mil, struct mpls_instr_elem *mie, int length)
 {
 	struct mpls_ilm *ilm = mpls_get_ilm_label(mil);
+	int retval;
 	MPLS_ENTER;
 	MPLS_EXIT;
-	return _mpls_ilm_set_instrs(ilm,mie,length);
+	retval = _mpls_ilm_set_instrs(ilm,mie,length);
+	mpls_ilm_release(ilm);
+	return retval;
 }
 
 int _mpls_ilm_set_instrs(struct mpls_ilm *ilm, struct mpls_instr_elem *mie, int length)
@@ -209,23 +125,25 @@ int _mpls_ilm_set_instrs(struct mpls_ilm *ilm, struct mpls_instr_elem *mie, int 
 }
 
 /**
- *      mpls_ilm_dst_alloc - construct a mpls_ilm entry.
+ *      mpls_ilm_alloc - construct a mpls_ilm entry.
  *
  **/
 
-struct mpls_ilm *mpls_ilm_dst_alloc(unsigned int key, struct mpls_label *ml, struct mpls_prot_driver *prot, struct mpls_instr_elem *instr, int instr_len)
+struct mpls_ilm *mpls_ilm_alloc(unsigned int key, struct mpls_label *ml, struct mpls_instr_elem *instr, int instr_len)
 {
 	struct mpls_ilm *ilm;
 
 	MPLS_ENTER;
-	BUG_ON(!prot);
-	ilm = dst_alloc(&ilm_dst_ops, NULL, 1, 0, 0);
+	ilm = kmem_cache_alloc(ilm_cachep, GFP_ATOMIC);
 
 	if (unlikely(!ilm)){
 		MPLS_EXIT;
 		return NULL;
 	}
 
+	ilm->kmem_cachep = ilm_cachep;
+
+	atomic_set(&ilm->refcnt,1);
 	memcpy(&ilm->ilm_label, ml, sizeof(struct mpls_label));
 	INIT_LIST_HEAD(&ilm->dev_entry);
 	INIT_LIST_HEAD(&ilm->nhlfe_entry);
@@ -236,9 +154,6 @@ struct mpls_ilm *mpls_ilm_dst_alloc(unsigned int key, struct mpls_label *ml, str
 	ilm->ilm_labelspace = ml->ml_labelspace;
 	ilm->ilm_age = jiffies;
 	ilm->ilm_owner = RTPROT_UNSPEC;
-	ilm->ilm_proto = prot;
-
-	ilm->dst.input = ilm->ilm_proto->local_deliver;
 
 	if (_mpls_ilm_set_instrs(ilm, instr, instr_len)) {
 		mpls_ilm_release(ilm);
@@ -249,7 +164,7 @@ struct mpls_ilm *mpls_ilm_dst_alloc(unsigned int key, struct mpls_label *ml, str
 	MPLS_EXIT;
 	return ilm;
 }
-EXPORT_SYMBOL(mpls_ilm_dst_alloc);
+EXPORT_SYMBOL(mpls_ilm_alloc);
 
 /*
  * Some label values are reserved.
@@ -422,47 +337,6 @@ inline struct mpls_ilm *mpls_get_ilm_by_label(struct mpls_label *label, int labe
 	return ilm;
 }
 
-/**
- *	mpls_set_in_label_proto - change the proto driver on a ilm
- *	@mil: request.
- *
- *	Updates the ILM object corresponding to the label/labelspace
- *	in the request, by changing the proto driver as given.
- *
- *	Returns 0 on success or no change, or
- *	   -ESRCH
- *	   -EINVAL
- */
-int mpls_set_in_label_proto(struct mpls_in_label_req *mil)
-{
-	unsigned int key = mpls_label2key(mil->mil_label.ml_labelspace,
-		&mil->mil_label);
-	struct mpls_ilm *ilm = mpls_get_ilm(key);
-	int retval = 0;
-	MPLS_ENTER;
-	if (!ilm) {
-		retval = -ESRCH;
-		goto err_no_ilm;
-	}
-
-	if (ilm->ilm_proto->family != mil->mil_proto) {
-		struct mpls_prot_driver *prot =	mpls_proto_find_by_family(mil->mil_proto);
-		if (!prot) {
-			retval = -EINVAL;
-			goto err_no_prot;
-		}
-		mpls_proto_release(&ilm->ilm_proto);
-		ilm->ilm_proto = prot;
-		ilm->dst.input = prot->local_deliver;
-	}
-
-err_no_prot:
-	mpls_ilm_release(ilm);
-err_no_ilm:
-	MPLS_EXIT;
-	return retval;
-}
-
 /*
  * mpls_get_ilm - returns existing ilm, if there is no ilm returns NULL
  */
@@ -504,8 +378,7 @@ static inline int mpls_is_reserved_label(const struct mpls_label *label)
  *
  *	Process context entry point to add an entry (ILM) in the incoming label
  *	map database. It adds new corresponding node to the Incoming Radix Tree.
- *	It sets the ILM object reference count to 1, the ilm age to jiffies, the
- *	protocol to IPv4, the default instruction set (POP,PEEK) and initializes
+ *	It sets the ILM object reference count to 1, the ilm age to jiffies, the default instruction set (POP,PEEK) and initializes
  *	both the dev_entry and nhlfe_entry lists. The node's key is set to the
  *	mapped	key from the label/labelspace in the request.
  *
@@ -518,7 +391,6 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
 	struct mpls_label *ml    = NULL; /* Requested Label */
 	unsigned int key         = 0;    /* Key to use */
 	struct mpls_instr_elem instr[2];
-	struct mpls_prot_driver *prot;
 
 	MPLS_ENTER;
 
@@ -552,14 +424,7 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
 	instr[1].mir_direction = MPLS_IN;
 	instr[1].mir_opcode    = MPLS_OP_PEEK;
 
-	prot = mpls_proto_find_by_family(in->mil_proto);
-	if (unlikely(!prot)) {
-		printk(KERN_ERR "unable to find protocol driver for '0x%04x'\n", in->mil_proto);
-		MPLS_EXIT;
-		return ERR_PTR(-ENOENT);
-	}
-
-	ilm = mpls_ilm_dst_alloc(key, ml, prot, instr, 2);
+	ilm = mpls_ilm_alloc(key, ml, instr, 2);
 	if (unlikely(!ilm)) {
 		MPLS_EXIT;
 		return ERR_PTR(-ENOMEM);
@@ -623,7 +488,8 @@ int mpls_del_in_label(struct mpls_in_label_req *in,int seq,int pid)
 	 * our references to NHLFE's */
 	mpls_destroy_ilm_instrs(ilm);
 
-	mpls_ilm_drop(ilm);
+	/*this release are going to drop ilm*/
+	mpls_ilm_release(ilm);
 	MPLS_EXIT;
 	return 0;
 }
@@ -651,17 +517,20 @@ int mpls_del_ilm(struct mpls_ilm *ilm,int seq,int pid)
 	/* Remove an ILM from the tree */
 	mpls_remove_ilm(ilm->ilm_key);
 
-	/* Release the refcnt taken on mpls_get_ilm() */
-	mpls_ilm_release(ilm);
-
-	/* we're still holding a ref to the ILM, so it is safe to
-	 * call mpls_ilm_event */
-	mpls_ilm_event(MPLS_GRP_ILM_NAME,MPLS_CMD_DELILM, ilm,seq,pid);
 	/* remove the instructions from the ILM to release
 	 * our references to NHLFE's */
 	mpls_destroy_ilm_instrs(ilm);
 
-	mpls_ilm_drop(ilm);
+	/* we're still holding a ref to the ILM, so it is safe to
+	 * call mpls_ilm_event */
+	mpls_ilm_event(MPLS_GRP_ILM_NAME,MPLS_CMD_DELILM, ilm,seq,pid);
+
+	/* Release the refcnt taken on mpls_get_ilm()
+	 * this release is going to drop nhlfe
+	 */
+	WARN_ON(atomic_read(&ilm->refcnt)!=1);
+	mpls_ilm_release(ilm);
+
 	MPLS_EXIT;
 	return 0;
 }
@@ -881,14 +750,11 @@ struct mpls_ilm *mpls_del_reserved_label (int label)
 int __init mpls_ilm_init(void)
 {
 	MPLS_ENTER;
-	if (dst_entries_init(&ilm_dst_ops) < 0)
-		panic("MPLS: failed to allocate ilm_dst_ops counter\n");
 
-	ilm_dst_ops.kmem_cachep = kmem_cache_create("ilm_dst_cache", sizeof(struct mpls_ilm), 0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+	ilm_cachep = kmem_cache_create("ilm_cache", sizeof(struct mpls_ilm), 0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
 
-	if (!ilm_dst_ops.kmem_cachep) {
-		printk("MPLS: failed to alloc ilm_dst_cache\n");
-		dst_entries_destroy(&ilm_dst_ops);
+	if (!ilm_cachep) {
+		printk("MPLS: failed to alloc ilm_cache\n");
 		MPLS_EXIT;
 		return -ENOMEM;
 	}
@@ -899,9 +765,8 @@ int __init mpls_ilm_init(void)
 void mpls_ilm_exit(void)
 {
 	MPLS_ENTER;
-	if (ilm_dst_ops.kmem_cachep)
-		kmem_cache_destroy(ilm_dst_ops.kmem_cachep);
+	if (ilm_cachep)
+		kmem_cache_destroy(ilm_cachep);
 
-	dst_entries_destroy(&ilm_dst_ops);
 	MPLS_EXIT;
 }
