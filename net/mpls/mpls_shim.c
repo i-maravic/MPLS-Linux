@@ -34,11 +34,10 @@ inline int mpls_set_nexthop2(struct mpls_nhlfe *nhlfe, struct dst_entry *dst)
 	MPLS_ENTER;
 
 	dst_metric_set(dst, RTAX_MTU, dst_mtu(&nhlfe->dst));
-	dst->child = dst_clone(&nhlfe->dst);
+	dst->child = &nhlfe->dst;
 	dst->header_len = nhlfe->dst.header_len;
 
-	MPLS_DEBUG("nhlfe: %p mtu: %d dst: %p\n", nhlfe, dst_mtu(&nhlfe->dst),
-			dst);
+	MPLS_DEBUG("nhlfe: %p mtu: %d dst: %p\n", nhlfe, dst_mtu(&nhlfe->dst), dst);
 
 	MPLS_EXIT;
 	return 0;

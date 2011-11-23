@@ -58,7 +58,6 @@
 #define MPLS_CHANGE_MTU		0x01
 #define MPLS_CHANGE_PROP_TTL	0x02
 #define MPLS_CHANGE_INSTR	0x04
-#define MPLS_CHANGE_PROTO	0x10
 
 enum mpls_dir {
 	MPLS_IN = 0x10,
@@ -114,7 +113,6 @@ struct mpls_label {
 };
 
 struct mpls_in_label_req {
-	unsigned int      mil_proto;
 	struct mpls_label mil_label;
 	unsigned char     mil_change_flag;
 	unsigned char     mil_owner;   /* Routing protocol */

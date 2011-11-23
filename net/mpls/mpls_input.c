@@ -32,6 +32,7 @@
 #include <net/ipv6.h>
 #endif
 #include <net/mpls.h>
+#include <net/xfrm.h>
 
 
 /**
@@ -70,8 +71,6 @@ mpls_input_start:
 		MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_IFINLABELLOOKUPFAILURES);
 		goto mpls_input_drop;
 	}
-
-	prot = cb->prot = ilm->ilm_proto;
 
 	/* Iterate all the opcodes for this ILM */
 	for_each_instr(ilm->ilm_instr, mi) {
@@ -112,7 +111,6 @@ mpls_input_start:
 	/* fall through to drop */
 
 mpls_input_drop:
-	/* proto driver isn't held yet, no need to release it */
 	if (ilm)
 		mpls_ilm_release(ilm);
 
@@ -121,38 +119,28 @@ mpls_input_drop:
 	return NET_RX_DROP;
 
 mpls_input_dlv:
-	/* about to mangle the skb copy it */
-	if (skb_cow(skb, skb_headroom(skb))) {
-		printk_ratelimited(KERN_ERR "unable to cow skb\n");
-		MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INDISCARDS);
-		mpls_ilm_release(ilm);
+	secpath_reset(skb);
+	skb->mac_header = skb->network_header;
+	skb_reset_network_header(skb);
+	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+		goto mpls_input_drop;
 
-		return NET_RX_DROP;
-	}
-	
-	/* we are holding the dst already */
-	skb_dst_set(skb, &ilm->dst);
+	if (ip_hdr(skb)->version == 4)
+		skb->protocol = htons(ETH_P_IP);
+	else if(ip_hdr(skb)->version == 6)
+		skb->protocol = htons(ETH_P_IPV6);
+	else
+		goto mpls_input_drop;
 
-	cb = MPLSCB(skb);
+	skb->pkt_type = PACKET_HOST;
+	__skb_tunnel_rx(skb, dev);
 
-	/* ala Cisco, take the lesser of the TTLs
-	 * -if propogate TTL was done at the ingress LER, then the
-	 *  shim TTL will be less the the header TTL
-	 * -if no propogate TTL was done as the ingress LER, a
-	 *  default TTL was placed in the shim, which makes the
-	 *  entire length of the LSP look like one hop to traceroute.
-	 *  As long as the default value placed in the shim is
-	 *  significantly larger then the TTL in the header, then
-	 *  traceroute will work fine.  If not, then traceroute
-	 *  will continualy show the egress of the LSP as the
-	 *  next hop in the path.
-	 */
-
-	if (cb->ttl < prot->get_ttl(skb))
-		prot->set_ttl(skb, cb->ttl);
+	mpls_ilm_release(ilm);
 
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
 	MPLS_ADD_STATS_BH(dev_net(dev), MPLS_MIB_INOCTETS, packet_length);
+
+	netif_rx(skb);
 	/* we're done with the PDU, it now goes to another layer for handling
 	 */
 	MPLS_DEBUG("delivering\n");
@@ -167,16 +155,17 @@ mpls_input_fwd:
 		MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INDISCARDS);
 		mpls_ilm_release (ilm);
 	}
-	
+
 	cb = MPLSCB(skb);
-	
+	prot = cb->prot = nhlfe->nhlfe_proto;
+
 	if (cb->ttl <= 1) {
 		printk(KERN_DEBUG "TTL exceeded\n");
 
 		retval = prot->ttl_expired(&skb);
-		mpls_ilm_release (ilm);
 
 		if (retval){
+			mpls_ilm_release (ilm);
 			MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INERRORS);
 			MPLS_EXIT;
 			return retval;
@@ -186,21 +175,15 @@ mpls_input_fwd:
 		 */
 	}
 
+	cb->label = 0;
+	cb->exp = 0;
+	cb->flag = 0;
+
 	if(cb->popped_bos){
-		MPLS_DEBUG("Popped bos\n");
-		cb->prot = nhlfe->nhlfe_proto;
-		cb->label = 0;
-		cb->exp = 0;
 		cb->bos = 1;
-		cb->flag = 0;
 		skb->protocol = nhlfe->nhlfe_proto->ethertype;
 	} else {
-		MPLS_DEBUG("Not popped bos\n");
-		cb->prot = nhlfe->nhlfe_proto;
-		cb->label = 0;
-		cb->exp = 0;
 		cb->bos = 0;
-		cb->flag = 0;
 		skb->protocol = htons(ETH_P_MPLS_UC);
 	}
 
@@ -219,7 +202,7 @@ mpls_input_fwd:
 
 	MPLS_DEBUG("switching\n");
 	MPLS_EXIT;
-	return NET_RX_SUCCESS;
+	return dst_input(skb);
 }
 
 /**
@@ -233,7 +216,6 @@ inline int mpls_skb_recv(struct sk_buff *skb,	struct net_device *dev, struct pac
 {
 	struct mpls_skb_cb *cb;
 	int labelspace;
-	int result = NET_RX_DROP;
 	struct mpls_label label;
 	struct mpls_interface *mip = dev->mpls_ptr;
 
@@ -283,11 +265,8 @@ inline int mpls_skb_recv(struct sk_buff *skb,	struct net_device *dev, struct pac
 	if (mpls_input(skb, dev, &label, labelspace))
 		goto mpls_rcv_out;//don't go to mpls_rcv_drop because we've already incremented drop counter
 
-	result = dst_input(skb);
-
-	MPLS_DEBUG("exit(%d)\n", result);
 	MPLS_EXIT;
-	return result;
+	return NET_RX_SUCCESS;
 
 mpls_rcv_err:
 	MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INDISCARDS);

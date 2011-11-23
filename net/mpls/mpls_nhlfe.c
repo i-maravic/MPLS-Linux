@@ -340,14 +340,12 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol, struct mpls_instr_elem
 	if (nhlfe->nhlfe_instr){
 		no_instr_old = mpls_no_instrs(nhlfe->nhlfe_instr);
 		instr_old = kmalloc(sizeof(*instr_old)+	no_instr_old*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
-
 		if (unlikely(!instr_old)){
+			mpls_nhlfe_release(nhlfe);
 			MPLS_EXIT;
 			return -1;
 		}
-
 		mpls_instrs_unbuild(nhlfe->nhlfe_instr, instr_old);
-
 		mpls_instrs_free(nhlfe->nhlfe_instr);
 	}
 
@@ -361,6 +359,7 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol, struct mpls_instr_elem
 		retval = -1;
 	}
 	nhlfe->nhlfe_instr = instr;
+	mpls_nhlfe_release(nhlfe);
 	if(instr_old)
 		kfree(instr_old);
 	MPLS_EXIT;
@@ -499,6 +498,7 @@ int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
 	/* schedule all higher layer protocols to give up their references */
 	mpls_proto_cache_flush_all(&init_net);
 
+	WARN_ON(atomic_read(&nhlfe->dst.__refcnt)!=1);
 	/* Let the dst system know we're done with this NHLFE */
 	mpls_nhlfe_drop(nhlfe);
 
@@ -553,8 +553,8 @@ static void mpls_nhlfe_del_list_in(struct mpls_nhlfe *nhlfe)
 		/* With no data */
 		mi->mi_data = NULL;
 del:
-		/* Even if there are errors release nhlfe - 
-		 * if __refcnt is less then 0 we will have warning, 
+		/* Even if there are errors release nhlfe -
+		 * if __refcnt is less then 0 we will have warning,
 		 * but at least nhlfe is going to be deleted
 		 */
 		mpls_nhlfe_release(nhlfe);
@@ -618,6 +618,7 @@ int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
 	/* schedule all higher layer protocols to give up their references */
 	mpls_proto_cache_flush_all(&init_net);
 
+	WARN_ON(atomic_read(&nhlfe->dst.__refcnt)!=1);
 	/* Let the dst system know we're done with this NHLFE */
 	mpls_nhlfe_drop(nhlfe);
 

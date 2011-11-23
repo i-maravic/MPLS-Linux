@@ -269,10 +269,11 @@ static void inline mpls_proto_release(struct mpls_prot_driver **prot)
  ****************************************************************************/
 
 struct mpls_ilm {
-	struct dst_entry dst;
-	struct list_head global;
+	atomic_t 				refcnt;
+	struct kmem_cache		*kmem_cachep;
+	struct list_head 		global;
 	/* To appear as an entry in the device ILM list */
-	struct list_head dev_entry;
+	struct list_head 		dev_entry;
 
 	/* List of NHLFE */
 	struct list_head        nhlfe_entry;
@@ -284,8 +285,6 @@ struct mpls_ilm {
 	unsigned int             ilm_key;
 	/* Jiffies */
 	unsigned int             ilm_age;
-	/* L3 protocol driver for packets that use this ILM */
-	struct mpls_prot_driver *ilm_proto;
 	/* Incoming Labelspace (see doc) */
 	unsigned short           ilm_labelspace;
 	/* Routing protocol */
@@ -303,9 +302,8 @@ void              mpls_ilm_exit(void);
 struct mpls_ilm*  mpls_get_ilm(unsigned int key);
 struct mpls_ilm*  mpls_get_ilm_by_label(struct mpls_label *label,
 				int labelspace, char bos);
-extern struct mpls_ilm* mpls_ilm_dst_alloc(unsigned int key,
+extern struct mpls_ilm* mpls_ilm_alloc(unsigned int key,
 				struct mpls_label *ml,
-				struct mpls_prot_driver *prot,
 				struct mpls_instr_elem *instr,
 				int instr_len);
 
@@ -493,7 +491,6 @@ static inline void mpls_nhlfe_update_mtu(struct mpls_nhlfe *nhlfe, unsigned shor
 struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in);
 struct mpls_ilm *mpls_get_ilm_label(const struct mpls_in_label_req *in);
 int  mpls_del_in_label(struct mpls_in_label_req *in,int seq, int pid);
-int  mpls_set_in_label_proto(struct mpls_in_label_req *in);
 int  mpls_add_reserved_label(int label, struct mpls_ilm* ilm);
 struct mpls_ilm* mpls_del_reserved_label (int label);
 int mpls_ilm_set_instrs(struct mpls_in_label_req *mil, struct mpls_instr_elem *mie, int length);
@@ -562,7 +559,7 @@ int mpls_xc_event(char* grp_name, int event, struct mpls_ilm *ilm,	struct mpls_n
 static inline struct mpls_ilm* mpls_ilm_hold(struct mpls_ilm* ilm)
 {
 	BUG_ON(!ilm);
-	dst_hold(&ilm->dst);
+	atomic_inc(&ilm->refcnt);
 	return ilm;
 }
 
@@ -571,14 +568,8 @@ static inline struct mpls_ilm* mpls_ilm_hold(struct mpls_ilm* ilm)
 static inline void mpls_ilm_release(struct mpls_ilm* ilm)
 {
 	BUG_ON(!ilm);
-	dst_release(&ilm->dst);
-}
-
-/* Drop */
-static inline void mpls_ilm_drop(struct mpls_ilm *ilm)
-{
-	mpls_ilm_release(ilm);
-	call_rcu_bh(&ilm->dst.rcu_head, dst_rcu_free);
+	if (atomic_dec_and_test(&ilm->refcnt))
+	 	kmem_cache_free(ilm->kmem_cachep, ilm);
 }
 
 

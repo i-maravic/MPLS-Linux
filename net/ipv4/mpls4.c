@@ -62,7 +62,7 @@ static inline void mpls4_change_dsfield(struct sk_buff *skb, int ds)
 }
 
 static inline int mpls4_get_dsfield(struct sk_buff *skb)
-{	
+{
 	MPLS_ENTER;
 	MPLS_EXIT;
 	return ipv4_get_dsfield(ip_hdr(skb)) >> 2;
@@ -393,7 +393,7 @@ static int __init mpls4_init(void)
 	instr[1].mir_direction = MPLS_IN;
 	instr[1].mir_opcode    = MPLS_OP_PEEK;
 
-	ilm = mpls_ilm_dst_alloc(0, &ml, &mpls4_driver, instr, 2);
+	ilm = mpls_ilm_alloc(0, &ml, instr, 2);
 	if (!ilm){
 		MPLS_EXIT;
 		return -ENOMEM;
@@ -413,7 +413,7 @@ static void __exit mpls4_fini(void)
 {
 	struct mpls_ilm *ilm = mpls_del_reserved_label(MPLS_IPV4_EXPLICIT_NULL);
 	MPLS_ENTER;
-	mpls_ilm_drop(ilm);
+	mpls_ilm_release(ilm);
 	mpls_proto_remove(&mpls4_driver);
 
 	printk(KERN_INFO "MPLS: IPv4 over MPLS support exiting\n");
