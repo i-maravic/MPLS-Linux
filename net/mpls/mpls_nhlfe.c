@@ -459,53 +459,6 @@ struct mpls_nhlfe *mpls_add_out_label(struct mpls_out_label_req *out)
 	return nhlfe;
 }
 
-/**
- *	mpls_del_nhlfe - Remove a NHLFE from the tree
- *	@nhlfe: nhlfe entry to delete
- **/
-int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
-{
-	int retval;
-
-	MPLS_ENTER;
-
-	BUG_ON(!nhlfe);
-
-	/*
-	 * This code starts the process of removing a NHLFE from the
-	 * system.  The first thing we we do it remove it from the tree
-	 * so no one else can get a reference to it.  Then we notify the
-	 * higher layer protocols that they should give up thier references
-	 * soon (does not need to happen immediatly, the dst system allows
-	 * for this.
-	 */
-
-	/* remove the NHLFE from the tree */
-	mpls_remove_nhlfe(nhlfe->nhlfe_key);
-
-	/* Remove reference taken on mpls_get_nhlfe() */
-	mpls_nhlfe_release(nhlfe);
-
-	/* From now on, drop packets */
-	nhlfe->dst.output = dst_discard;
-
-	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
-
-	/* Destroy the instructions on this NHLFE, so as to no longer
-	 * hold refs to interfaces and other NHLFE's. */
-	mpls_destroy_nhlfe_instrs(nhlfe);
-
-	/* schedule all higher layer protocols to give up their references */
-	mpls_proto_cache_flush_all(&init_net);
-
-	WARN_ON(atomic_read(&nhlfe->dst.__refcnt)!=1);
-	/* Let the dst system know we're done with this NHLFE */
-	mpls_nhlfe_drop(nhlfe);
-
-	MPLS_EXIT;
-	return retval;
-}
-
 /*
  * mpls_nhlfe_del_list_in - changes FWD to PEEK in all ilms in the list
  * @nhlfe:  nhlfe holding the list_in
@@ -565,6 +518,55 @@ del:
 }
 
 /**
+ *	mpls_del_nhlfe - Remove a NHLFE from the tree
+ *	@nhlfe: nhlfe entry to delete
+ **/
+int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
+{
+	int retval;
+
+	MPLS_ENTER;
+
+	BUG_ON(!nhlfe);
+
+	/*
+	 * This code starts the process of removing a NHLFE from the
+	 * system.  The first thing we we do it remove it from the tree
+	 * so no one else can get a reference to it.  Then we notify the
+	 * higher layer protocols that they should give up thier references
+	 * soon (does not need to happen immediatly, the dst system allows
+	 * for this.
+	 */
+
+	/* remove the NHLFE from the tree */
+	mpls_remove_nhlfe(nhlfe->nhlfe_key);
+
+	/*
+	 * Clean ilms holding this nhlfe
+	 */
+	mpls_nhlfe_del_list_in(nhlfe);
+
+	/* From now on, drop packets */
+	nhlfe->dst.output = dst_discard;
+
+	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
+
+	/* Destroy the instructions on this NHLFE, so as to no longer
+	 * hold refs to interfaces and other NHLFE's. */
+	mpls_destroy_nhlfe_instrs(nhlfe);
+
+	/* schedule all higher layer protocols to give up their references */
+	mpls_proto_cache_flush_all(&init_net);
+
+	WARN_ON(atomic_read(&nhlfe->dst.__refcnt)!=1);
+	/* Let the dst system know we're done with this NHLFE */
+	mpls_nhlfe_drop(nhlfe);
+
+	MPLS_EXIT;
+	return retval;
+}
+
+/**
  *	mpls_del_out_label - Remove a NHLFE from the tree
  *	@out: request.
  **/
@@ -596,7 +598,7 @@ int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
 	 */
 
 	/*
-	 * Clean ilms and nhlfes holding this nhlfe
+	 * Clean ilms holding this nhlfe
 	 */
 	mpls_nhlfe_del_list_in(nhlfe);
 
