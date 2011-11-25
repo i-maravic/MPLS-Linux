@@ -65,7 +65,7 @@ enum mpls_dir {
 };
 
 enum mpls_opcode_enum {
-	MPLS_OP_NOP = 0x00,
+	MPLS_OP_DROP = 0x00,
 	MPLS_OP_POP,
 	MPLS_OP_PEEK,
 	MPLS_OP_PUSH,
