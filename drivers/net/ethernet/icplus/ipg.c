@@ -155,7 +155,7 @@ static void ipg_dump_tfdlist(struct net_device *dev)
 	netdev_info(dev, "TFDList start address = %016lx\n",
 		    (unsigned long) sp->txd_map);
 	netdev_info(dev, "TFDListPtr register   = %08x%08x\n",
-		    ipg_r32(TFD_LIST_PTR_1), ipg_r32(IPG_TFD_LIST_PTR_0));
+		    ipg_r32(TFD_LIST_PTR_1), ipg_r32(TFD_LIST_PTR_0));
 
 	for (i = 0; i < IPG_TFDLIST_LENGTH; i++) {
 		offset = (u32) &sp->txd[i].next_desc - (u32) sp->txd;
