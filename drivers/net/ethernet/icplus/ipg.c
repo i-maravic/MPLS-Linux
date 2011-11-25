@@ -174,12 +174,16 @@ static void ipg_dump_tfdlist(struct net_device *dev)
 
 static void ipg_write_phy_ctl(void __iomem *ioaddr, u8 data)
 {
+	IPG_DEBUG_MSG("_write_phy_ctl\n");
+
 	ipg_w8(IPG_PC_RSVD_MASK & data, PHY_CTRL);
 	ndelay(IPG_PC_PHYCTRLWAIT_NS);
 }
 
 static void ipg_drive_phy_ctl_low_high(void __iomem *ioaddr, u8 data)
 {
+	IPG_DEBUG_MSG("_drive_phy_ctl_low_high\n");
+
 	ipg_write_phy_ctl(ioaddr, IPG_PC_MGMTCLK_LO | data);
 	ipg_write_phy_ctl(ioaddr, IPG_PC_MGMTCLK_HI | data);
 }
@@ -409,6 +413,7 @@ static void ipg_set_phy_set(struct net_device *dev)
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	void __iomem *ioaddr = sp->ioaddr;
 	int physet;
+	IPG_DEBUG_MSG("_set_phy_set\n");
 
 	physet = ipg_r8(PHY_SET);
 	physet &= ~(IPG_PS_MEM_LENB9B | IPG_PS_MEM_LEN9 | IPG_PS_NON_COMPDET);
@@ -449,6 +454,7 @@ static int ipg_reset(struct net_device *dev, u32 resetflags)
 static int ipg_find_phyaddr(struct net_device *dev)
 {
 	unsigned int phyaddr, i;
+	IPG_DEBUG_MSG("_find_phyaddr\n");
 
 	for (i = 0; i < 32; i++) {
 		u32 status;
@@ -908,6 +914,7 @@ static void ipg_tx_timeout(struct net_device *dev)
 {
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	void __iomem *ioaddr = sp->ioaddr;
+	IPG_DEBUG_MSG("_tx_timeout\n");
 
 	ipg_reset(dev, IPG_AC_TX_RESET | IPG_AC_DMA | IPG_AC_NETWORK |
 		  IPG_AC_FIFO);
@@ -1104,6 +1111,7 @@ static void ipg_nic_rx_free_skb(struct net_device *dev)
 {
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	unsigned int entry = sp->rx_current % IPG_RFDLIST_LENGTH;
+	IPG_DEBUG_MSG("_nic_rx_free_skb\n");
 
 	if (sp->rx_buff[entry]) {
 		struct ipg_rx *rxfd = sp->rxd + entry;
@@ -1121,6 +1129,7 @@ static int ipg_nic_rx_check_frame_type(struct net_device *dev)
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	struct ipg_rx *rxfd = sp->rxd + (sp->rx_current % IPG_RFDLIST_LENGTH);
 	int type = FRAME_NO_START_NO_END;
+	IPG_DEBUG_MSG("_nic_rx_check_frame_type\n");
 
 	if (le64_to_cpu(rxfd->rfs) & IPG_RFS_FRAMESTART)
 		type += FRAME_WITH_START;
@@ -1134,6 +1143,7 @@ static int ipg_nic_rx_check_error(struct net_device *dev)
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	unsigned int entry = sp->rx_current % IPG_RFDLIST_LENGTH;
 	struct ipg_rx *rxfd = sp->rxd + entry;
+	IPG_DEBUG_MSG("_nic_rx_check_error\n");
 
 	if (IPG_DROP_ON_RX_ETH_ERRORS && (le64_to_cpu(rxfd->rfs) &
 	     (IPG_RFS_RXFIFOOVERRUN | IPG_RFS_RXRUNTFRAME |
@@ -1194,6 +1204,7 @@ static void ipg_nic_rx_with_start_and_end(struct net_device *dev,
 	struct ipg_jumbo *jumbo = &sp->jumbo;
 	struct sk_buff *skb;
 	int framelen;
+	IPG_DEBUG_MSG("_nic_rx_with_start_and_end\n");
 
 	if (jumbo->found_start) {
 		dev_kfree_skb_irq(jumbo->skb);
@@ -1229,6 +1240,7 @@ static void ipg_nic_rx_with_start(struct net_device *dev,
 	struct ipg_jumbo *jumbo = &sp->jumbo;
 	struct pci_dev *pdev = sp->pdev;
 	struct sk_buff *skb;
+	IPG_DEBUG_MSG("_nic_rx_with_start\n");
 
 	/* 1: found error, 0 no error */
 	if (ipg_nic_rx_check_error(dev) != NORMAL_PACKET)
@@ -1259,6 +1271,7 @@ static void ipg_nic_rx_with_end(struct net_device *dev,
 				struct ipg_rx *rxfd, unsigned entry)
 {
 	struct ipg_jumbo *jumbo = &sp->jumbo;
+	IPG_DEBUG_MSG("_nic_rx_with_end\n");
 
 	/* 1: found error, 0 no error */
 	if (ipg_nic_rx_check_error(dev) == NORMAL_PACKET) {
@@ -1305,6 +1318,7 @@ static void ipg_nic_rx_no_start_no_end(struct net_device *dev,
 				       struct ipg_rx *rxfd, unsigned entry)
 {
 	struct ipg_jumbo *jumbo = &sp->jumbo;
+	IPG_DEBUG_MSG("_nic_rx_no_start_no_end\n");
 
 	/* 1: found error, 0 no error */
 	if (ipg_nic_rx_check_error(dev) == NORMAL_PACKET) {
@@ -1336,7 +1350,7 @@ static int ipg_nic_rx_jumbo(struct net_device *dev)
 	void __iomem *ioaddr = sp->ioaddr;
 	unsigned int i;
 
-	IPG_DEBUG_MSG("_nic_rx\n");
+	IPG_DEBUG_MSG("_nic_rx_jumbo\n");
 
 	for (i = 0; i < IPG_MAXRFDPROCESS_COUNT; i++, curr++) {
 		unsigned int entry = curr % IPG_RFDLIST_LENGTH;
@@ -1551,6 +1565,7 @@ static void ipg_reset_after_host_error(struct work_struct *work)
 	struct ipg_nic_private *sp =
 		container_of(work, struct ipg_nic_private, task.work);
 	struct net_device *dev = sp->dev;
+	IPG_DEBUG_MSG("_reset_after_host_error\n");
 
 	/*
 	 * Acknowledge HostError interrupt by resetting
@@ -1694,6 +1709,7 @@ out_unlock:
 static void ipg_rx_clear(struct ipg_nic_private *sp)
 {
 	unsigned int i;
+	IPG_DEBUG_MSG("_rx_clear\n");
 
 	for (i = 0; i < IPG_RFDLIST_LENGTH; i++) {
 		if (sp->rx_buff[i]) {
@@ -1711,6 +1727,7 @@ static void ipg_rx_clear(struct ipg_nic_private *sp)
 static void ipg_tx_clear(struct ipg_nic_private *sp)
 {
 	unsigned int i;
+	IPG_DEBUG_MSG("_tx_clear\n");
 
 	for (i = 0; i < IPG_TFDLIST_LENGTH; i++) {
 		if (sp->tx_buff[i]) {
@@ -1963,6 +1980,7 @@ static void ipg_set_phy_default_param(unsigned char rev,
 	unsigned char revision;
 	const unsigned short *phy_param;
 	unsigned short address, value;
+	IPG_DEBUG_MSG("_set_phy_default_param\n");
 
 	phy_param = &DefaultPhyParam[0];
 	length = *phy_param & 0x00FF;
@@ -2015,6 +2033,7 @@ static void ipg_init_mii(struct net_device *dev)
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	struct mii_if_info *mii_if = &sp->mii_if;
 	int phyaddr;
+	IPG_DEBUG_MSG("_init_mii\n");
 
 	mii_if->dev          = dev;
 	mii_if->mdio_read    = mdio_read;
@@ -2050,6 +2069,7 @@ static int ipg_hw_init(struct net_device *dev)
 	void __iomem *ioaddr = sp->ioaddr;
 	unsigned int i;
 	int rc;
+	IPG_DEBUG_MSG("_hw_init\n");
 
 	/* Read/Write and Reset EEPROM Value */
 	/* Read LED Mode Configuration from EEPROM */
@@ -2086,6 +2106,7 @@ static int ipg_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	int rc;
+	IPG_DEBUG_MSG("_ioctl\n");
 
 	mutex_lock(&sp->mii_mutex);
 	rc = generic_mii_ioctl(&sp->mii_if, if_mii(ifr), cmd, NULL);
@@ -2139,6 +2160,7 @@ static int ipg_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 {
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	int rc;
+	IPG_DEBUG_MSG("_get_settings\n");
 
 	mutex_lock(&sp->mii_mutex);
 	rc = mii_ethtool_gset(&sp->mii_if, cmd);
@@ -2151,6 +2173,7 @@ static int ipg_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 {
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	int rc;
+	IPG_DEBUG_MSG("_set_settings\n");
 
 	mutex_lock(&sp->mii_mutex);
 	rc = mii_ethtool_sset(&sp->mii_if, cmd);
@@ -2163,6 +2186,7 @@ static int ipg_nway_reset(struct net_device *dev)
 {
 	struct ipg_nic_private *sp = netdev_priv(dev);
 	int rc;
+	IPG_DEBUG_MSG("_nway_reset\n");
 
 	mutex_lock(&sp->mii_mutex);
 	rc = mii_nway_restart(&sp->mii_if);
@@ -2217,6 +2241,7 @@ static int __devinit ipg_probe(struct pci_dev *pdev,
 	struct net_device *dev;
 	void __iomem *ioaddr;
 	int rc;
+	IPG_DEBUG_MSG("_probe\n");
 
 	rc = pci_enable_device(pdev);
 	if (rc < 0)
