@@ -847,7 +847,7 @@ static void init_tfdlist(struct net_device *dev)
 	sp->tx_dirty = 0;
 
 	/* Write the location of the TFDList to the IPG. */
-	IPG_DDEBUG_MSG("Starting TFDListPtr = %08x\n",
+	IPG_DEBUG_MSG("Starting TFDListPtr = %08x\n",
 		       (u32) sp->txd_map);
 	ipg_w32((u32) sp->txd_map, TFD_LIST_PTR_0);
 	ipg_w32(0x00000000, TFD_LIST_PTR_1);
@@ -1657,7 +1657,7 @@ static irqreturn_t ipg_interrupt_handler(int irq, void *dev_inst)
 
 	/* If HostError interrupt, reset IPG. */
 	if (status & IPG_IS_HOST_ERROR) {
-		IPG_DDEBUG_MSG("HostError Interrupt\n");
+		IPG_DEBUG_MSG("HostError Interrupt\n");
 
 		schedule_delayed_work(&sp->task, 0);
 	}
@@ -1854,7 +1854,7 @@ static netdev_tx_t ipg_nic_hard_start_xmit(struct sk_buff *skb,
 	unsigned long flags;
 	struct ipg_tx *txfd;
 
-	IPG_DDEBUG_MSG("_nic_hard_start_xmit\n");
+	IPG_DEBUG_MSG("_nic_hard_start_xmit\n");
 
 	/* If in 10Mbps mode, stop the transmit queue so
 	 * no more transmit frames are accepted.
