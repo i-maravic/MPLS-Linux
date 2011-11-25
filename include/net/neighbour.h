@@ -368,7 +368,6 @@ static inline void neigh_check_type(struct neighbour *n, __be16 proto)
 		read_unlock_bh(&n->lock);
 		write_lock_bh(&n->lock);
 		n->h_prot = proto;
-		memset(&n->hh.hh_data, 0, sizeof(n->hh.hh_data));
 		n->hh.hh_len = 0;
 		write_unlock_bh(&n->lock);
 		return;
