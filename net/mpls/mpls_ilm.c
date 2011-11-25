@@ -600,6 +600,8 @@ int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid)
 
 	switch (mi->mi_opcode) {
 	case MPLS_OP_DLV:
+	case MPLS_OP_PEEK:
+	case MPLS_OP_DROP:
 		mi->mi_opcode = MPLS_OP_FWD;
 		mi->mi_data   = (void*)nhlfe;
 		break;
@@ -607,10 +609,6 @@ int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid)
 		mpls_xc_event(MPLS_GRP_XC_NAME, MPLS_CMD_DELXC, ilm,
 				_mpls_as_nhlfe(mi->mi_data),0,0);
 		mpls_nhlfe_release(_mpls_as_nhlfe(mi->mi_data));
-		mi->mi_data   = (void*)nhlfe;
-		break;
-	case MPLS_OP_PEEK:
-		mi->mi_opcode = MPLS_OP_FWD;
 		mi->mi_data   = (void*)nhlfe;
 		break;
 	}
@@ -687,8 +685,8 @@ int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq, int pid)
 		goto out_release;
 	}
 
-	/* The new last opcode for this ILM is now peek */
-	mi->mi_opcode = MPLS_OP_PEEK;
+	/* The new last opcode for this ILM is now drop */
+	mi->mi_opcode = MPLS_OP_DROP;
 	/* With no data */
 	mi->mi_data = NULL;
 

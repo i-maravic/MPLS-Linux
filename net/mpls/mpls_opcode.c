@@ -58,20 +58,29 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_generic)
 
 
 /*********************************************************************
- * MPLS_OP_NOP
- * DESC   : "No operation".
- * EXEC   : mpls_op_nop
+ * MPLS_OP_DROP
+ * DESC   : "Drop packet".
+ * EXEC   : mpls_op_drop
  * INPUT  : true
  * OUTPUT : true
  * DATA   : NULL
  * LAST   : true
  *********************************************************************/
 
-inline MPLS_OPCODE_PROTOTYPE(mpls_op_nop)
+inline MPLS_OPCODE_PROTOTYPE(mpls_op_drop)
 {
 	MPLS_ENTER;
 	MPLS_EXIT;
-	return MPLS_RESULT_SUCCESS;
+	return MPLS_RESULT_DROP;
+}
+
+MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_op_drop)
+{
+	MPLS_ENTER;
+	*data = NULL;
+	*last_able = 1;
+	MPLS_EXIT;
+	return 0;
 }
 
 
@@ -1674,14 +1683,14 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_nf2exp)
  *********************************************************************/
 
 struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
-	[MPLS_OP_NOP] = {
-			.in      = mpls_op_nop,
-			.out     = mpls_op_nop,
-			.build   = NULL,
+	[MPLS_OP_DROP] = {
+			.in      = mpls_op_drop,
+			.out     = mpls_op_drop,
+			.build   = mpls_build_op_drop,
 			.unbuild = NULL,
 			.cleanup = NULL,
 			.extra   = 0,
-			.msg     = "NOP",
+			.msg     = "DROP",
 	},
 	[MPLS_OP_POP] = {
 			.in      = mpls_in_op_pop,

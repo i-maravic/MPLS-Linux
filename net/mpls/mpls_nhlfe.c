@@ -501,8 +501,8 @@ static void mpls_nhlfe_del_list_in(struct mpls_nhlfe *nhlfe)
 			goto del;
 		}
 
-		/* The new last opcode for this ILM is now peek */
-		mi->mi_opcode = MPLS_OP_PEEK;
+		/* The new last opcode for this ILM is now drop */
+		mi->mi_opcode = MPLS_OP_DROP;
 		/* With no data */
 		mi->mi_data = NULL;
 del:
