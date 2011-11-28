@@ -1207,6 +1207,13 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_exp)
 {
 	unsigned char  *exp = NULL;
 	MPLS_ENTER;
+
+	if (direction != MPLS_OUT) {
+		MPLS_DEBUG("SET_EXP only valid for outgoing labels\n");
+		MPLS_EXIT;
+		return -EINVAL;
+	}
+
 	*data = NULL;
 	exp = kzalloc(sizeof(*exp),GFP_ATOMIC);
 	if (unlikely(!exp)) {
@@ -1711,7 +1718,7 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.msg     = "PEEK",
 	},
 	[MPLS_OP_PUSH] = {
-			.in      = mpls_op_push,
+			.in      = NULL,
 			.out     = mpls_op_push,
 			.build   = mpls_build_opcode_push,
 			.unbuild = mpls_unbuild_opcode_push,
