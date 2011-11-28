@@ -28,6 +28,7 @@
 #include <net/route.h>
 #include <net/mpls.h>
 
+static struct kmem_cache *instr_cachep;
 
 /**
  *	mpls_instr_alloc - Allocate a mpls_instruction object
@@ -38,9 +39,14 @@ struct mpls_instr *mpls_instr_alloc(unsigned short opcode)
 {
 	struct mpls_instr  *mi;
 	MPLS_ENTER;
-	mi = kzalloc(sizeof(struct mpls_instr), GFP_KERNEL);
+	mi = kmem_cache_alloc(instr_cachep, GFP_KERNEL);
+	memset(mi,0,sizeof(struct mpls_instr));
 	if (likely(mi))
 		mi->mi_opcode = opcode;
+	else {
+		printk(KERN_ERR "MPLS: Couldn't allocate mpls_instr!\n");
+		return NULL;
+	}
 	MPLS_EXIT;
 	return mi;
 }
@@ -59,11 +65,12 @@ void mpls_instr_release(struct mpls_instr *mi)
 	enum mpls_dir dir = mi->mi_dir;
 
 	MPLS_ENTER;
+	BUG_ON(!mi);
 
 	if ((mpls_ops[op].cleanup) && data)
 		mpls_ops[op].cleanup (data, parent, dir);
 
-	kfree (mi);
+	kmem_cache_free(instr_cachep, mi);
 	MPLS_EXIT;
 }
 
@@ -228,6 +235,30 @@ void mpls_instrs_unbuild(struct mpls_instr *instr, struct mpls_instr_req *req)
 	}
 
 	req->mir_instr_length = c;
+
+	MPLS_EXIT;
+}
+
+int __init mpls_instr_init(void)
+{
+	MPLS_ENTER;
+
+	instr_cachep = kmem_cache_create("instr_cache", sizeof(struct mpls_instr), 0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+
+	if (!instr_cachep) {
+		printk("MPLS: failed to alloc instr_cache\n");
+		MPLS_EXIT;
+		return -ENOMEM;
+	}
+	MPLS_EXIT;
+	return 0;
+}
+
+void mpls_instr_exit(void)
+{
+	MPLS_ENTER;
+	if (instr_cachep)
+		kmem_cache_destroy(instr_cachep);
 
 	MPLS_EXIT;
 }

@@ -246,11 +246,13 @@ static int __init mpls_init_module(void)
 		(MPLS_LINUX_VERSION >> 16) & 0xFF,
 		(MPLS_LINUX_VERSION >> 8) & 0xFF,
 		(MPLS_LINUX_VERSION) & 0xFF);
-
+	/* Init instruction cache */
+	if((err = mpls_instr_init())){
+		return err;
+	}
 	/* Init Input Radix Tree */
 	if ((err = mpls_ilm_init())){
-		MPLS_EXIT;
-		return err;
+		goto cleanup_instr;
 	}
 	/* Init Output Radix Tree */
 	if ((err = mpls_nhlfe_init())){
@@ -292,6 +294,8 @@ cleanup_nhlfe:
 	mpls_nhlfe_exit();
 cleanup_ilm:
 	mpls_ilm_exit();
+cleanup_instr:
+	mpls_instr_exit();
 	MPLS_EXIT;
 	return err;
 }
@@ -315,6 +319,7 @@ static void __exit mpls_exit_module(void)
 #endif
 	mpls_nhlfe_exit();
 	mpls_ilm_exit();
+	mpls_instr_exit();
 
 	synchronize_net();
 
