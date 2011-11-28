@@ -514,6 +514,8 @@ int mpls_set_out_label_propagate_ttl(struct mpls_out_label_req *mol);
 
 void mpls_destroy_nhlfe_instrs(struct mpls_nhlfe *nhlfe);
 void mpls_destroy_ilm_instrs(struct mpls_ilm  *ilm);
+int  mpls_instr_init(void);
+void mpls_instr_exit(void);
 
 /* Return last instruction of a list */
 static inline struct mpls_instr *mpls_instr_getlast(struct mpls_instr *instr)
