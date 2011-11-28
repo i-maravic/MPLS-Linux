@@ -656,25 +656,11 @@ enum ipg_regs {
 /* Macros for printing debug statements. */
 #ifdef IPG_DEBUG
 #  define IPG_DEBUG_MSG(fmt, args...)			\
-do {							\
-	if (0)						\
-		printk(KERN_DEBUG "IPG: " fmt, ##args);	\
-} while (0)
-#  define IPG_DDEBUG_MSG(fmt, args...)			\
-	printk(KERN_DEBUG "IPG: " fmt, ##args)
+	printk(KERN_DEBUG "IPG: " fmt, ##args);
 #  define IPG_DUMPRFDLIST(args) ipg_dump_rfdlist(args)
 #  define IPG_DUMPTFDLIST(args) ipg_dump_tfdlist(args)
 #else
-#  define IPG_DEBUG_MSG(fmt, args...)			\
-do {							\
-	if (0)						\
-		printk(KERN_DEBUG "IPG: " fmt, ##args);	\
-} while (0)
-#  define IPG_DDEBUG_MSG(fmt, args...)			\
-do {							\
-	if (0)						\
-		printk(KERN_DEBUG "IPG: " fmt, ##args);	\
-} while (0)
+#  define IPG_DEBUG_MSG(fmt, args...)
 #  define IPG_DUMPRFDLIST(args)
 #  define IPG_DUMPTFDLIST(args)
 #endif
