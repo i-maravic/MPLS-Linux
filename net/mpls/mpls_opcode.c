@@ -1805,7 +1805,7 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 	},
 #endif
 	[MPLS_OP_SET_EXP] = {
-			.in      = mpls_op_set_exp,
+			.in      = NULL,
 			.out     = mpls_op_set_exp,
 			.build   = mpls_build_opcode_set_exp,
 			.unbuild = mpls_unbuild_opcode_set_exp,
