@@ -44,7 +44,8 @@
 
 static struct mpls_interface *mpls_create_if_info(void)
 {
-	struct mpls_interface *mif = kzalloc(sizeof(struct mpls_interface), GFP_KERNEL);
+	struct mpls_interface *mif =
+		kzalloc(sizeof(struct mpls_interface), GFP_KERNEL);
 	MPLS_ENTER;
 	if (unlikely(!mif)) {
 		MPLS_EXIT;
@@ -68,14 +69,15 @@ static struct mpls_interface *mpls_create_if_info(void)
  *	Returns 0 on success.
  **/
 
-static int __mpls_set_labelspace(struct net_device *dev, int labelspace,int seq,int pid)
+static int __mpls_set_labelspace(struct net_device *dev,
+		int labelspace, int seq, int pid)
 {
 	struct mpls_interface *mif = dev->mpls_ptr;
 	int err;
 
 	MPLS_ENTER;
 	if (!mif && labelspace != -1) {
-		mif = mpls_create_if_info ();
+		mif = mpls_create_if_info();
 		if (unlikely(!mif)) {
 			MPLS_DEBUG("Err: Set labelspace for %s to %d\n",
 					dev->name, labelspace);
@@ -91,7 +93,7 @@ static int __mpls_set_labelspace(struct net_device *dev, int labelspace,int seq,
 	} else {
 		if (labelspace == -1) {
 			MPLS_DEBUG("Resetting labelspace for %s to %d\n",
-					dev->name,-1);
+					dev->name, -1);
 			kfree(dev->mpls_ptr);
 			dev->mpls_ptr = NULL;
 		} else {
@@ -99,7 +101,8 @@ static int __mpls_set_labelspace(struct net_device *dev, int labelspace,int seq,
 		}
 
 	}
-	err = mpls_labelspace_event(MPLS_GRP_LABELSPACE_NAME, MPLS_CMD_SETLABELSPACE, dev,seq,pid);
+	err = mpls_labelspace_event(MPLS_GRP_LABELSPACE_NAME,
+		MPLS_CMD_SETLABELSPACE, dev, seq, pid);
 	MPLS_EXIT;
 	return err;
 }
@@ -117,15 +120,17 @@ static int __mpls_set_labelspace(struct net_device *dev, int labelspace,int seq,
  *	Returns 0 on success.
  **/
 
-int mpls_set_labelspace (struct mpls_labelspace_req *req,int seq, int pid)
+int mpls_set_labelspace(struct mpls_labelspace_req *req, int seq, int pid)
 {
 	int result = -1;
-	struct net_device *dev = dev_get_by_index (&init_net, req->mls_ifindex);
+	struct net_device *dev =
+		dev_get_by_index(&init_net, req->mls_ifindex);
 
 	MPLS_ENTER;
 	if (dev) {
-		result = __mpls_set_labelspace(dev, req->mls_labelspace,seq,pid);
-		dev_put (dev);
+		result = __mpls_set_labelspace(dev,
+			req->mls_labelspace, seq, pid);
+		dev_put(dev);
 	}
 	MPLS_EXIT;
 	return result;
