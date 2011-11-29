@@ -51,7 +51,7 @@ LIST_HEAD(mpls_nhlfe_list);
 /* forward declarations */
 static struct dst_entry *nhlfe_dst_check(struct dst_entry *dst, u32 cookie);
 static unsigned int      nhlfe_dst_default_advmss(const struct dst_entry *dst);
-static unsigned int      nhlfe_dst_default_mtu(const struct dst_entry *dst);
+static unsigned int      nhlfe_dst_mtu(const struct dst_entry *dst);
 static void              nhlfe_dst_destroy(struct dst_entry *dst);
 static struct dst_entry *nhlfe_dst_negative_advice(struct dst_entry *dst);
 static void              nhlfe_dst_link_failure(struct sk_buff *skb);
@@ -65,13 +65,13 @@ static struct dst_ops nhlfe_dst_ops __read_mostly= {
 	.gc	= nhlfe_dst_gc,
 	.check = nhlfe_dst_check,
 	.default_advmss = nhlfe_dst_default_advmss,
-	.default_mtu =  nhlfe_dst_default_mtu,
+	.mtu =  nhlfe_dst_mtu,
+	.cow_metrics = dst_cow_metrics_generic,
 	.destroy = nhlfe_dst_destroy,
 	.negative_advice = nhlfe_dst_negative_advice,
 	.link_failure = nhlfe_dst_link_failure,
 	.update_pmtu = nhlfe_dst_update_pmtu,
 	.neigh_lookup = nhlfe_dst_neigh_lookup,
-	.cow_metrics = dst_cow_metrics_generic,
 };
 
 static struct dst_entry *nhlfe_dst_check (struct dst_entry *dst, u32 cookie)
@@ -90,7 +90,7 @@ static unsigned int nhlfe_dst_default_advmss(const struct dst_entry *dst)
 	return advmss;
 }
 
-static unsigned int nhlfe_dst_default_mtu(const struct dst_entry *dst)
+static unsigned int nhlfe_dst_mtu(const struct dst_entry *dst)
 {
 	unsigned int mtu = dst->dev->mtu;
 	MPLS_ENTER;
