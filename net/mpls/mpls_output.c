@@ -62,8 +62,6 @@ static inline int mpls_send(struct sk_buff *skb)
 	
 	rcu_read_lock();
 	neigh = dst_get_neighbour(dst);
-	if(neigh)
-		printk(KERN_INFO "%s %s\n",__FUNCTION__, neigh->ha);
 	if (neigh){
 		int res = neigh_output(neigh, skb);
 		MPLS_EXIT;
@@ -155,7 +153,6 @@ send:
 
 	/* Send to the hardware */
 	ret = mpls_send(skb);
-	printk(KERN_INFO "%s %d\n",__FUNCTION__,ret);
 	if (likely(ret == NET_XMIT_SUCCESS || ret == NET_XMIT_CN)) {
 		MPLS_INC_STATS(dev_net(dev),MPLS_MIB_OUTPACKETS);
 		MPLS_ADD_STATS(dev_net(dev),MPLS_MIB_OUTOCTETS, packet_length);
