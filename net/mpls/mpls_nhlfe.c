@@ -92,8 +92,12 @@ static unsigned int nhlfe_dst_default_advmss(const struct dst_entry *dst)
 
 static unsigned int nhlfe_dst_mtu(const struct dst_entry *dst)
 {
-	unsigned int mtu = dst->dev->mtu;
+	unsigned int mtu;
 	MPLS_ENTER;
+	if (dst->dev)
+		mtu = dst->dev->mtu;
+	else
+		mtu = MPLS_INVALID_MTU;
 	printk(KERN_DEBUG "NHLFE default mtu %u\n", mtu);
 	MPLS_EXIT;
 	return mtu;
@@ -558,7 +562,7 @@ int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
 	/* schedule all higher layer protocols to give up their references */
 	mpls_proto_cache_flush_all(&init_net);
 
-	WARN_ON(atomic_read(&nhlfe->dst.__refcnt)!=1);
+	WARN_ON(atomic_read(&nhlfe->dst.__refcnt) != 1);
 	/* Let the dst system know we're done with this NHLFE */
 	mpls_nhlfe_drop(nhlfe);
 
