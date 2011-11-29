@@ -85,11 +85,12 @@ static void mpls_sock_destruct(struct sock *sk)
  *      Create an mpls socket.
  */
 
-static int mpls_create(struct net *net, struct socket *sock, int protocol, int kern)
+static int mpls_create(struct net *net, struct socket *sock,
+	int protocol, int kern)
 {
 	struct sock *sk;
 	MPLS_ENTER;
-	if (net != &init_net){
+	if (net != &init_net) {
 		MPLS_EXIT;
 		return -EAFNOSUPPORT;
 	}
@@ -98,7 +99,7 @@ static int mpls_create(struct net *net, struct socket *sock, int protocol, int k
 	sock->ops = &mpls_sk_ops;
 
 	sk = sk_alloc(net, PF_INET, GFP_KERNEL, &mpls_proto);
-	if (!sk){
+	if (!sk) {
 		MPLS_EXIT;
 		return -1;
 	}
@@ -125,7 +126,7 @@ int __init mpls_sock_init(void)
 {
 	int rc = proto_register(&mpls_proto, 0);
 	MPLS_ENTER;
-	if (rc){
+	if (rc) {
 		MPLS_EXIT;
 		return rc;
 	}

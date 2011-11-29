@@ -69,18 +69,20 @@ void mpls_destroy_ilm_instrs(struct mpls_ilm *ilm)
  *
  *	Called in process context only and may sleep
  **/
-int mpls_ilm_set_instrs(struct mpls_in_label_req *mil, struct mpls_instr_elem *mie, int length)
+int mpls_ilm_set_instrs(struct mpls_in_label_req *mil,
+		struct mpls_instr_elem *mie, int length)
 {
 	struct mpls_ilm *ilm = mpls_get_ilm_label(mil);
 	int retval;
 	MPLS_ENTER;
 	MPLS_EXIT;
-	retval = _mpls_ilm_set_instrs(ilm,mie,length);
+	retval = _mpls_ilm_set_instrs(ilm, mie, length);
 	mpls_ilm_release(ilm);
 	return retval;
 }
 
-int _mpls_ilm_set_instrs(struct mpls_ilm *ilm, struct mpls_instr_elem *mie, int length)
+int _mpls_ilm_set_instrs(struct mpls_ilm *ilm,
+		struct mpls_instr_elem *mie, int length)
 {
 	/* To store (tmp) the linked list of instr. */
 	struct mpls_instr *instr_list = NULL;
