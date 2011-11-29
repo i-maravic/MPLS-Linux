@@ -781,10 +781,15 @@ static void stmmac_mmc_setup(struct stmmac_priv *priv)
 	unsigned int mode = MMC_CNTRL_RESET_ON_READ | MMC_CNTRL_COUNTER_RESET |
 			    MMC_CNTRL_PRESET | MMC_CNTRL_FULL_HALF_PRESET;
 
-	/* Do not manage MMC IRQ (FIXME) */
+	/* Mask MMC irq, counters are managed in SW and registers
+	 * are cleared on each READ eventually. */
 	dwmac_mmc_intr_all_mask(priv->ioaddr);
-	dwmac_mmc_ctrl(priv->ioaddr, mode);
-	memset(&priv->mmc, 0, sizeof(struct stmmac_counters));
+
+	if (priv->dma_cap.rmon) {
+		dwmac_mmc_ctrl(priv->ioaddr, mode);
+		memset(&priv->mmc, 0, sizeof(struct stmmac_counters));
+	} else
+		pr_info(" No MAC Management Counters available");
 }
 
 static u32 stmmac_get_synopsys_id(struct stmmac_priv *priv)
@@ -1012,8 +1017,7 @@ static int stmmac_open(struct net_device *dev)
 	memset(&priv->xstats, 0, sizeof(struct stmmac_extra_stats));
 	priv->xstats.threshold = tc;
 
-	if (priv->dma_cap.rmon)
-		stmmac_mmc_setup(priv);
+	stmmac_mmc_setup(priv);
 
 	/* Start the ball rolling... */
 	DBG(probe, DEBUG, "%s: DMA RX/TX processes started...\n", dev->name);
@@ -2127,27 +2131,6 @@ static struct platform_driver stmmac_driver = {
 	},
 };
 
-/**
- * stmmac_init_module - Entry point for the driver
- * Description: This function is the entry point for the driver.
- */
-static int __init stmmac_init_module(void)
-{
-	int ret;
-
-	ret = platform_driver_register(&stmmac_driver);
-	return ret;
-}
-
-/**
- * stmmac_cleanup_module - Cleanup routine for the driver
- * Description: This function is the cleanup routine for the driver.
- */
-static void __exit stmmac_cleanup_module(void)
-{
-	platform_driver_unregister(&stmmac_driver);
-}
-
 #ifndef MODULE
 static int __init stmmac_cmdline_opt(char *str)
 {
@@ -2207,8 +2190,7 @@ err:
 __setup("stmmaceth=", stmmac_cmdline_opt);
 #endif
 
-module_init(stmmac_init_module);
-module_exit(stmmac_cleanup_module);
+module_platform_driver(stmmac_driver);
 
 MODULE_DESCRIPTION("STMMAC 10/100/1000 Ethernet driver");
 MODULE_AUTHOR("Giuseppe Cavallaro <peppe.cavallaro@st.com>");

@@ -366,16 +366,6 @@ struct mlx4_en_rss_map {
 	enum mlx4_qp_state indir_state;
 };
 
-struct mlx4_en_rss_context {
-	__be32 base_qpn;
-	__be32 default_qpn;
-	u16 reserved;
-	u8 hash_fn;
-	u8 flags;
-	__be32 rss_key[10];
-	__be32 base_qpn_udp;
-};
-
 struct mlx4_en_port_state {
 	int link_state;
 	int link_speed;
@@ -463,6 +453,7 @@ struct mlx4_en_priv {
 	int base_qpn;
 
 	struct mlx4_en_rss_map rss_map;
+	u32 ctrl_flags;
 	u32 flags;
 #define MLX4_EN_FLAG_PROMISC	0x1
 #define MLX4_EN_FLAG_MC_PROMISC	0x2
@@ -495,9 +486,9 @@ struct mlx4_en_priv {
 enum mlx4_en_wol {
 	MLX4_EN_WOL_MAGIC = (1ULL << 61),
 	MLX4_EN_WOL_ENABLED = (1ULL << 62),
-	MLX4_EN_WOL_DO_MODIFY = (1ULL << 63),
 };
 
+#define MLX4_EN_WOL_DO_MODIFY (1ULL << 63)
 
 void mlx4_en_destroy_netdev(struct net_device *dev);
 int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,

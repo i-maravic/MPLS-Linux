@@ -237,7 +237,8 @@ static int be_mac_addr_set(struct net_device *netdev, void *p)
 		return -EADDRNOTAVAIL;
 
 	status = be_cmd_mac_addr_query(adapter, current_mac,
-			MAC_ADDRESS_TYPE_NETWORK, false, adapter->if_handle);
+				MAC_ADDRESS_TYPE_NETWORK, false,
+				adapter->if_handle, 0);
 	if (status)
 		goto err;
 
@@ -848,11 +849,18 @@ static int be_set_vf_mac(struct net_device *netdev, int vf, u8 *mac)
 	if (!is_valid_ether_addr(mac) || (vf >= num_vfs))
 		return -EINVAL;
 
-	status = be_cmd_pmac_del(adapter, adapter->vf_cfg[vf].vf_if_handle,
+	if (lancer_chip(adapter)) {
+		status = be_cmd_set_mac_list(adapter,  mac, 1, vf + 1);
+	} else {
+		status = be_cmd_pmac_del(adapter,
+				adapter->vf_cfg[vf].vf_if_handle,
 				adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
 
-	status = be_cmd_pmac_add(adapter, mac, adapter->vf_cfg[vf].vf_if_handle,
+		status = be_cmd_pmac_add(adapter, mac,
+				adapter->vf_cfg[vf].vf_if_handle,
 				&adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
+	}
+
 	if (status)
 		dev_err(&adapter->pdev->dev, "MAC %pM set on VF %d Failed\n",
 				mac, vf);
@@ -1658,9 +1666,12 @@ static int be_tx_queues_create(struct be_adapter *adapter)
 	u8 i;
 
 	adapter->num_tx_qs = be_num_txqs_want(adapter);
-	if (adapter->num_tx_qs != MAX_TX_QS)
+	if (adapter->num_tx_qs != MAX_TX_QS) {
+		rtnl_lock();
 		netif_set_real_num_tx_queues(adapter->netdev,
 			adapter->num_tx_qs);
+		rtnl_unlock();
+	}
 
 	adapter->tx_eq.max_eqd = 0;
 	adapter->tx_eq.min_eqd = 0;
@@ -2033,52 +2044,6 @@ void be_detect_dump_ue(struct be_adapter *adapter)
 	}
 }
 
-static void be_worker(struct work_struct *work)
-{
-	struct be_adapter *adapter =
-		container_of(work, struct be_adapter, work.work);
-	struct be_rx_obj *rxo;
-	int i;
-
-	be_detect_dump_ue(adapter);
-
-	/* when interrupts are not yet enabled, just reap any pending
-	* mcc completions */
-	if (!netif_running(adapter->netdev)) {
-		int mcc_compl, status = 0;
-
-		mcc_compl = be_process_mcc(adapter, &status);
-
-		if (mcc_compl) {
-			struct be_mcc_obj *mcc_obj = &adapter->mcc_obj;
-			be_cq_notify(adapter, mcc_obj->cq.id, false, mcc_compl);
-		}
-
-		goto reschedule;
-	}
-
-	if (!adapter->stats_cmd_sent) {
-		if (lancer_chip(adapter))
-			lancer_cmd_get_pport_stats(adapter,
-						&adapter->stats_cmd);
-		else
-			be_cmd_get_stats(adapter, &adapter->stats_cmd);
-	}
-
-	for_all_rx_queues(adapter, rxo, i) {
-		be_rx_eqd_update(adapter, rxo);
-
-		if (rxo->rx_post_starved) {
-			rxo->rx_post_starved = false;
-			be_post_rx_frags(rxo, GFP_KERNEL);
-		}
-	}
-
-reschedule:
-	adapter->work_counter++;
-	schedule_delayed_work(&adapter->work, msecs_to_jiffies(1000));
-}
-
 static void be_msix_disable(struct be_adapter *adapter)
 {
 	if (msix_enabled(adapter)) {
@@ -2347,8 +2312,8 @@ static int be_close(struct net_device *netdev)
 static int be_rx_queues_setup(struct be_adapter *adapter)
 {
 	struct be_rx_obj *rxo;
-	int rc, i;
-	u8 rsstable[MAX_RSS_QS];
+	int rc, i, j;
+	u8 rsstable[128];
 
 	for_all_rx_queues(adapter, rxo, i) {
 		rc = be_cmd_rxq_create(adapter, &rxo->q, rxo->cq.id,
@@ -2360,11 +2325,15 @@ static int be_rx_queues_setup(struct be_adapter *adapter)
 	}
 
 	if (be_multi_rxq(adapter)) {
-		for_all_rss_queues(adapter, rxo, i)
-			rsstable[i] = rxo->rss_id;
+		for (j = 0; j < 128; j += adapter->num_rx_qs - 1) {
+			for_all_rss_queues(adapter, rxo, i) {
+				if ((j + i) >= 128)
+					break;
+				rsstable[j + i] = rxo->rss_id;
+			}
+		}
+		rc = be_cmd_rss_config(adapter, rsstable, 128);
 
-		rc = be_cmd_rss_config(adapter, rsstable,
-			adapter->num_rx_qs - 1);
 		if (rc)
 			return rc;
 	}
@@ -2465,13 +2434,18 @@ static inline int be_vf_eth_addr_config(struct be_adapter *adapter)
 	be_vf_eth_addr_generate(adapter, mac);
 
 	for (vf = 0; vf < num_vfs; vf++) {
-		status = be_cmd_pmac_add(adapter, mac,
+		if (lancer_chip(adapter)) {
+			status = be_cmd_set_mac_list(adapter,  mac, 1, vf + 1);
+		} else {
+			status = be_cmd_pmac_add(adapter, mac,
 					adapter->vf_cfg[vf].vf_if_handle,
 					&adapter->vf_cfg[vf].vf_pmac_id,
 					vf + 1);
+		}
+
 		if (status)
 			dev_err(&adapter->pdev->dev,
-				"Mac address add failed for VF %d\n", vf);
+			"Mac address assignment failed for VF %d\n", vf);
 		else
 			memcpy(adapter->vf_cfg[vf].vf_mac_addr, mac, ETH_ALEN);
 
@@ -2484,9 +2458,14 @@ static void be_vf_clear(struct be_adapter *adapter)
 {
 	u32 vf;
 
-	for (vf = 0; vf < num_vfs; vf++)
-		be_cmd_pmac_del(adapter, adapter->vf_cfg[vf].vf_if_handle,
-				adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
+	for (vf = 0; vf < num_vfs; vf++) {
+		if (lancer_chip(adapter))
+			be_cmd_set_mac_list(adapter, NULL, 0, vf + 1);
+		else
+			be_cmd_pmac_del(adapter,
+					adapter->vf_cfg[vf].vf_if_handle,
+					adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
+	}
 
 	for (vf = 0; vf < num_vfs; vf++)
 		be_cmd_if_destroy(adapter, adapter->vf_cfg[vf].vf_if_handle,
@@ -2527,7 +2506,9 @@ static int be_vf_setup(struct be_adapter *adapter)
 
 	be_vf_setup_init(adapter);
 
-	cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED | BE_IF_FLAGS_BROADCAST;
+	cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED | BE_IF_FLAGS_BROADCAST |
+				BE_IF_FLAGS_MULTICAST;
+
 	for (vf = 0; vf < num_vfs; vf++) {
 		status = be_cmd_if_create(adapter, cap_flags, en_flags, NULL,
 					&adapter->vf_cfg[vf].vf_if_handle,
@@ -2536,11 +2517,9 @@ static int be_vf_setup(struct be_adapter *adapter)
 			goto err;
 	}
 
-	if (!lancer_chip(adapter)) {
-		status = be_vf_eth_addr_config(adapter);
-		if (status)
-			goto err;
-	}
+	status = be_vf_eth_addr_config(adapter);
+	if (status)
+		goto err;
 
 	for (vf = 0; vf < num_vfs; vf++) {
 		status = be_cmd_link_status_query(adapter, NULL, &lnk_speed,
@@ -2562,6 +2541,23 @@ static void be_setup_init(struct be_adapter *adapter)
 	adapter->be3_native = false;
 	adapter->promiscuous = false;
 	adapter->eq_next_idx = 0;
+}
+
+static int be_configure_mac_from_list(struct be_adapter *adapter, u8 *mac)
+{
+	u32 pmac_id;
+	int status = be_cmd_get_mac_from_list(adapter, 0, &pmac_id);
+	if (status != 0)
+		goto do_none;
+	status = be_cmd_mac_addr_query(adapter, mac,
+			MAC_ADDRESS_TYPE_NETWORK,
+			false, adapter->if_handle, pmac_id);
+	if (status != 0)
+		goto do_none;
+	status = be_cmd_pmac_add(adapter, mac, adapter->if_handle,
+			&adapter->pmac_id, 0);
+do_none:
+	return status;
 }
 
 static int be_setup(struct be_adapter *adapter)
@@ -2591,7 +2587,7 @@ static int be_setup(struct be_adapter *adapter)
 
 	memset(mac, 0, ETH_ALEN);
 	status = be_cmd_mac_addr_query(adapter, mac, MAC_ADDRESS_TYPE_NETWORK,
-			true /*permanent */, 0);
+			true /*permanent */, 0, 0);
 	if (status)
 		return status;
 	memcpy(adapter->netdev->dev_addr, mac, ETH_ALEN);
@@ -2618,12 +2614,17 @@ static int be_setup(struct be_adapter *adapter)
 			goto err;
 	}
 
-	/* For BEx, the VF's permanent mac queried from card is incorrect.
-	 * Query the mac configued by the PF using if_handle
-	 */
-	if (!be_physfn(adapter) && !lancer_chip(adapter)) {
-		status = be_cmd_mac_addr_query(adapter, mac,
-			MAC_ADDRESS_TYPE_NETWORK, false, adapter->if_handle);
+	 /* The VF's permanent mac queried from card is incorrect.
+	  * For BEx: Query the mac configued by the PF using if_handle
+	  * For Lancer: Get and use mac_list to obtain mac address.
+	  */
+	if (!be_physfn(adapter)) {
+		if (lancer_chip(adapter))
+			status = be_configure_mac_from_list(adapter, mac);
+		else
+			status = be_cmd_mac_addr_query(adapter, mac,
+					MAC_ADDRESS_TYPE_NETWORK, false,
+					adapter->if_handle, 0);
 		if (!status) {
 			memcpy(adapter->netdev->dev_addr, mac, ETH_ALEN);
 			memcpy(adapter->netdev->perm_addr, mac, ETH_ALEN);
@@ -2639,12 +2640,15 @@ static int be_setup(struct be_adapter *adapter)
 	be_set_rx_mode(adapter->netdev);
 
 	status = be_cmd_get_flow_control(adapter, &tx_fc, &rx_fc);
-	if (status)
+	/* For Lancer: It is legal for this cmd to fail on VF */
+	if (status && (be_physfn(adapter) || !lancer_chip(adapter)))
 		goto err;
+
 	if (rx_fc != adapter->rx_fc || tx_fc != adapter->tx_fc) {
 		status = be_cmd_set_flow_control(adapter, adapter->tx_fc,
 					adapter->rx_fc);
-		if (status)
+		/* For Lancer: It is legal for this cmd to fail on VF */
+		if (status && (be_physfn(adapter) || !lancer_chip(adapter)))
 			goto err;
 	}
 
@@ -3282,7 +3286,7 @@ static int be_dev_family_check(struct be_adapter *adapter)
 
 static int lancer_wait_ready(struct be_adapter *adapter)
 {
-#define SLIPORT_READY_TIMEOUT 500
+#define SLIPORT_READY_TIMEOUT 30
 	u32 sliport_status;
 	int status = 0, i;
 
@@ -3291,7 +3295,7 @@ static int lancer_wait_ready(struct be_adapter *adapter)
 		if (sliport_status & SLIPORT_STATUS_RDY_MASK)
 			break;
 
-		msleep(20);
+		msleep(1000);
 	}
 
 	if (i == SLIPORT_READY_TIMEOUT)
@@ -3326,6 +3330,104 @@ static int lancer_test_and_set_rdy_state(struct be_adapter *adapter)
 		}
 	}
 	return status;
+}
+
+static void lancer_test_and_recover_fn_err(struct be_adapter *adapter)
+{
+	int status;
+	u32 sliport_status;
+
+	if (adapter->eeh_err || adapter->ue_detected)
+		return;
+
+	sliport_status = ioread32(adapter->db + SLIPORT_STATUS_OFFSET);
+
+	if (sliport_status & SLIPORT_STATUS_ERR_MASK) {
+		dev_err(&adapter->pdev->dev,
+				"Adapter in error state."
+				"Trying to recover.\n");
+
+		status = lancer_test_and_set_rdy_state(adapter);
+		if (status)
+			goto err;
+
+		netif_device_detach(adapter->netdev);
+
+		if (netif_running(adapter->netdev))
+			be_close(adapter->netdev);
+
+		be_clear(adapter);
+
+		adapter->fw_timeout = false;
+
+		status = be_setup(adapter);
+		if (status)
+			goto err;
+
+		if (netif_running(adapter->netdev)) {
+			status = be_open(adapter->netdev);
+			if (status)
+				goto err;
+		}
+
+		netif_device_attach(adapter->netdev);
+
+		dev_err(&adapter->pdev->dev,
+				"Adapter error recovery succeeded\n");
+	}
+	return;
+err:
+	dev_err(&adapter->pdev->dev,
+			"Adapter error recovery failed\n");
+}
+
+static void be_worker(struct work_struct *work)
+{
+	struct be_adapter *adapter =
+		container_of(work, struct be_adapter, work.work);
+	struct be_rx_obj *rxo;
+	int i;
+
+	if (lancer_chip(adapter))
+		lancer_test_and_recover_fn_err(adapter);
+
+	be_detect_dump_ue(adapter);
+
+	/* when interrupts are not yet enabled, just reap any pending
+	* mcc completions */
+	if (!netif_running(adapter->netdev)) {
+		int mcc_compl, status = 0;
+
+		mcc_compl = be_process_mcc(adapter, &status);
+
+		if (mcc_compl) {
+			struct be_mcc_obj *mcc_obj = &adapter->mcc_obj;
+			be_cq_notify(adapter, mcc_obj->cq.id, false, mcc_compl);
+		}
+
+		goto reschedule;
+	}
+
+	if (!adapter->stats_cmd_sent) {
+		if (lancer_chip(adapter))
+			lancer_cmd_get_pport_stats(adapter,
+						&adapter->stats_cmd);
+		else
+			be_cmd_get_stats(adapter, &adapter->stats_cmd);
+	}
+
+	for_all_rx_queues(adapter, rxo, i) {
+		be_rx_eqd_update(adapter, rxo);
+
+		if (rxo->rx_post_starved) {
+			rxo->rx_post_starved = false;
+			be_post_rx_frags(rxo, GFP_KERNEL);
+		}
+	}
+
+reschedule:
+	adapter->work_counter++;
+	schedule_delayed_work(&adapter->work, msecs_to_jiffies(1000));
 }
 
 static int __devinit be_probe(struct pci_dev *pdev,
@@ -3380,7 +3482,12 @@ static int __devinit be_probe(struct pci_dev *pdev,
 		goto disable_sriov;
 
 	if (lancer_chip(adapter)) {
-		status = lancer_test_and_set_rdy_state(adapter);
+		status = lancer_wait_ready(adapter);
+		if (!status) {
+			iowrite32(SLI_PORT_CONTROL_IP_MASK,
+					adapter->db + SLIPORT_CONTROL_OFFSET);
+			status = lancer_test_and_set_rdy_state(adapter);
+		}
 		if (status) {
 			dev_err(&pdev->dev, "Adapter in non recoverable error\n");
 			goto ctrl_clean;
