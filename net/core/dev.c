@@ -1451,16 +1451,18 @@ static atomic_t netstamp_needed_deferred;
 
 void net_enable_timestamp(void)
 {
+	WARN_ON(in_interrupt());
 #ifdef HAVE_JUMP_LABEL
-	int deferred = atomic_xchg(&netstamp_needed_deferred, 0);
-
-	if (deferred) {
-		while (--deferred)
-			jump_label_dec(&netstamp_needed);
-		return;
+	{
+		int deferred = atomic_xchg(&netstamp_needed_deferred, 0);
+	
+		if (deferred) {
+			while (--deferred)
+				jump_label_dec(&netstamp_needed);
+			return;
+		}
 	}
 #endif
-	WARN_ON(in_interrupt());
 	jump_label_inc(&netstamp_needed);
 }
 EXPORT_SYMBOL(net_enable_timestamp);
