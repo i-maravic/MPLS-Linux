@@ -94,11 +94,12 @@ int _mpls_ilm_set_instrs(struct mpls_ilm *ilm,
 
 
 	/* Commit the new ones */
-	if (ilm->ilm_instr){
+	if (ilm->ilm_instr) {
 		no_instr = mpls_no_instrs(ilm->ilm_instr);
-		instr = kmalloc(sizeof(*instr)+	no_instr*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
+		instr = kmalloc(sizeof(*instr) +
+			no_instr*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
 
-		if (unlikely(!instr)){
+		if (unlikely(!instr)) {
 			MPLS_EXIT;
 			return -1;
 		}
@@ -109,19 +110,19 @@ int _mpls_ilm_set_instrs(struct mpls_ilm *ilm,
 	}
 
 	/* Build temporary opcode set from mie */
-	if (!mpls_instrs_build(mie, &instr_list, length, MPLS_IN, ilm)){
+	if (!mpls_instrs_build(mie, &instr_list, length, MPLS_IN, ilm)) {
 		/*replace with old instructions */
-		if(instr){
-			mpls_instrs_build(instr->mir_instr, &instr_list, instr->mir_instr_length, MPLS_IN, ilm);
-		}
+		if (instr)
+			mpls_instrs_build(instr->mir_instr, &instr_list,
+					instr->mir_instr_length, MPLS_IN, ilm);
+
 		MPLS_DEBUG("Return -1\n");
 		retval = -1;
 	}
 
 
 	ilm->ilm_instr = instr_list;
-	if(instr)
-		kfree(instr);
+	kfree(instr);
 	MPLS_EXIT;
 	return retval;
 }
@@ -131,21 +132,22 @@ int _mpls_ilm_set_instrs(struct mpls_ilm *ilm,
  *
  **/
 
-struct mpls_ilm *mpls_ilm_alloc(unsigned int key, struct mpls_label *ml, struct mpls_instr_elem *instr, int instr_len)
+struct mpls_ilm *mpls_ilm_alloc(unsigned int key, struct mpls_label *ml,
+		struct mpls_instr_elem *instr, int instr_len)
 {
 	struct mpls_ilm *ilm;
 
 	MPLS_ENTER;
 	ilm = kmem_cache_alloc(ilm_cachep, GFP_ATOMIC);
 
-	if (unlikely(!ilm)){
+	if (unlikely(!ilm)) {
 		MPLS_EXIT;
 		return NULL;
 	}
 
 	ilm->kmem_cachep = ilm_cachep;
 
-	atomic_set(&ilm->refcnt,1);
+	atomic_set(&ilm->refcnt, 1);
 	memcpy(&ilm->ilm_label, ml, sizeof(struct mpls_label));
 	INIT_LIST_HEAD(&ilm->dev_entry);
 	INIT_LIST_HEAD(&ilm->nhlfe_entry);
@@ -219,7 +221,8 @@ int mpls_insert_ilm(unsigned int key, struct mpls_ilm *ilm)
 	spin_lock_bh(&mpls_ilm_lock);
 	retval = radix_tree_insert(&mpls_ilm_tree, key, ilm);
 	if (unlikely(retval)) {
-		MPLS_DEBUG("Error create node with key %u in radix tree\n",key);
+		MPLS_DEBUG("Error create node with key "
+				"%u in radix tree\n", key);
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -250,7 +253,7 @@ void mpls_remove_ilm(unsigned int key)
 
 	ilm = radix_tree_delete(&mpls_ilm_tree, key);
 	if (!ilm) {
-		MPLS_DEBUG("ILM key %u not found.\n",key);
+		MPLS_DEBUG("ILM key %u not found.\n", key);
 		goto out;
 	}
 
@@ -305,14 +308,15 @@ inline struct mpls_ilm *mpls_get_ilm(unsigned int key)
  *	Remark2: uses the function above.
  **/
 
-inline struct mpls_ilm *mpls_get_ilm_by_label(struct mpls_label *label, int labelspace, char bos)
+inline struct mpls_ilm *mpls_get_ilm_by_label(struct mpls_label *label,
+		int labelspace, char bos)
 {
 	struct mpls_ilm *ilm = NULL;
 	MPLS_ENTER;
 	/* handle the reserved label range */
 	if (label->ml_type == MPLS_LABEL_GEN && label->u.ml_gen < 16) {
 		int want_bos = mpls_reserved[label->u.ml_gen].bos;
-		MPLS_DEBUG("%s\n",mpls_reserved[label->u.ml_gen].msg);
+		MPLS_DEBUG("%s\n", mpls_reserved[label->u.ml_gen].msg);
 		ilm = mpls_reserved[label->u.ml_gen].ilm;
 		if (unlikely(!ilm)) {
 			MPLS_DEBUG("invalid incoming label, dropping\n");
@@ -380,7 +384,8 @@ static inline int mpls_is_reserved_label(const struct mpls_label *label)
  *
  *	Process context entry point to add an entry (ILM) in the incoming label
  *	map database. It adds new corresponding node to the Incoming Radix Tree.
- *	It sets the ILM object reference count to 1, the ilm age to jiffies, the default instruction set (POP,PEEK) and initializes
+ *	It sets the ILM object reference count to 1, the ilm age to jiffies,
+ *	the default instruction set (POP,PEEK) and initializes
  *	both the dev_entry and nhlfe_entry lists. The node's key is set to the
  *	mapped	key from the label/labelspace in the request.
  *
@@ -411,7 +416,7 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
 	/* Check if the node already exists */
 	ilm = mpls_get_ilm(key);
 	if (unlikely(ilm)) {
-		printk (KERN_INFO "MPLS: node %u already exists\n",key);
+		printk(KERN_INFO "MPLS: node %u already exists\n", key);
 		mpls_ilm_release(ilm);
 		MPLS_EXIT;
 		return ERR_PTR(-EEXIST);
@@ -435,8 +440,8 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
 	ilm->ilm_owner = in->mil_owner;
 
 	/* Insert into ILM tree */
-	if (unlikely(mpls_insert_ilm(key,ilm))) {
-		mpls_ilm_release (ilm);
+	if (unlikely(mpls_insert_ilm(key, ilm))) {
+		mpls_ilm_release(ilm);
 		MPLS_EXIT;
 		return ERR_PTR(-ENOMEM);
 	}
@@ -459,7 +464,7 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
  *	then finally schedules the ILM for freeing.
  **/
 
-int mpls_del_in_label(struct mpls_in_label_req *in,int seq,int pid)
+int mpls_del_in_label(struct mpls_in_label_req *in, int seq, int pid)
 {
 	struct mpls_ilm   *ilm = NULL;
 	struct mpls_label *ml  = NULL;
@@ -472,7 +477,7 @@ int mpls_del_in_label(struct mpls_in_label_req *in,int seq,int pid)
 
 	ilm = mpls_get_ilm(key);
 	if (unlikely(!ilm)) {
-		MPLS_DEBUG("Node %u was not in tree\n",key);
+		MPLS_DEBUG("Node %u was not in tree\n", key);
 		MPLS_EXIT;
 		return  -ESRCH;
 	}
@@ -485,7 +490,8 @@ int mpls_del_in_label(struct mpls_in_label_req *in,int seq,int pid)
 
 	/* we're still holding a ref to the ILM, so it is safe to
 	 * call mpls_ilm_event */
-	mpls_ilm_event(MPLS_GRP_ILM_NAME,MPLS_CMD_DELILM, ilm,seq,pid);
+	mpls_ilm_event(MPLS_GRP_ILM_NAME,
+			MPLS_CMD_DELILM, ilm, seq, pid);
 	/* remove the instructions from the ILM to release
 	 * our references to NHLFE's */
 	mpls_destroy_ilm_instrs(ilm);
@@ -511,7 +517,7 @@ int mpls_del_in_label(struct mpls_in_label_req *in,int seq,int pid)
  *	then finally schedules the ILM for freeing.
  **/
 
-int mpls_del_ilm(struct mpls_ilm *ilm,int seq,int pid)
+int mpls_del_ilm(struct mpls_ilm *ilm, int seq, int pid)
 {
 	MPLS_ENTER;
 	BUG_ON(!ilm);
@@ -525,12 +531,13 @@ int mpls_del_ilm(struct mpls_ilm *ilm,int seq,int pid)
 
 	/* we're still holding a ref to the ILM, so it is safe to
 	 * call mpls_ilm_event */
-	mpls_ilm_event(MPLS_GRP_ILM_NAME,MPLS_CMD_DELILM, ilm,seq,pid);
+	mpls_ilm_event(MPLS_GRP_ILM_NAME,
+			MPLS_CMD_DELILM, ilm, seq, pid);
 
 	/* Release the refcnt taken on mpls_get_ilm()
 	 * this release is going to drop nhlfe
 	 */
-	WARN_ON(atomic_read(&ilm->refcnt)!=1);
+	WARN_ON(atomic_read(&ilm->refcnt) != 1);
 	mpls_ilm_release(ilm);
 
 	MPLS_EXIT;
@@ -555,7 +562,8 @@ int mpls_del_ilm(struct mpls_ilm *ilm,int seq,int pid)
  *	      the xconnect in order to release the NHLFE)
  **/
 
-int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid)
+int mpls_attach_in2out(struct mpls_xconnect_req *req,
+		int seq, int pid)
 {
 	struct mpls_instr  *mi  = NULL;
 	struct mpls_nhlfe  *nhlfe = NULL;
@@ -566,10 +574,11 @@ int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid)
 	labelspace = req->mx_in.ml_labelspace;
 
 	/* Hold a ref to the ILM */
-	key = mpls_label2key(labelspace,&req->mx_in);
+	key = mpls_label2key(labelspace, &req->mx_in);
 	ilm = mpls_get_ilm(key);
 	if (unlikely(!ilm))  {
-		MPLS_DEBUG("ILM %u does not exist in radix tree\n",key);
+		MPLS_DEBUG("ILM %u does not exist "
+					"in radix tree\n", key);
 		ret = -ESRCH;
 		goto out;
 	}
@@ -582,10 +591,11 @@ int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid)
 	}
 
 	/* Hold a ref to the NHLFE */
-	key = mpls_label2key(0,&req->mx_out);
+	key = mpls_label2key(0, &req->mx_out);
 	nhlfe = mpls_get_nhlfe(key);
 	if (unlikely(!nhlfe)) {
-		MPLS_DEBUG("Node %u does not exist in radix tree\n",key);
+		MPLS_DEBUG("Node %u does not exist "
+					"in radix tree\n", key);
 		ret = -ESRCH;
 		goto out_release;
 	}
@@ -605,16 +615,17 @@ int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid)
 	case MPLS_OP_PEEK:
 	case MPLS_OP_DROP:
 		mi->mi_opcode = MPLS_OP_FWD;
-		mi->mi_data   = (void*)nhlfe;
+		mi->mi_data   = (void *)nhlfe;
 		break;
 	case MPLS_OP_FWD:
 		mpls_xc_event(MPLS_GRP_XC_NAME, MPLS_CMD_DELXC, ilm,
-				_mpls_as_nhlfe(mi->mi_data),0,0);
+				_mpls_as_nhlfe(mi->mi_data), 0, 0);
 		mpls_nhlfe_release(_mpls_as_nhlfe(mi->mi_data));
-		mi->mi_data   = (void*)nhlfe;
+		mi->mi_data   = (void *)nhlfe;
 		break;
 	}
-	ret = mpls_xc_event(MPLS_GRP_XC_NAME,MPLS_CMD_NEWXC,ilm,nhlfe,seq,pid);
+	ret = mpls_xc_event(MPLS_GRP_XC_NAME,
+		MPLS_CMD_NEWXC, ilm, nhlfe, seq, pid);
 out_release:
 	mpls_ilm_release(ilm);
 out:
@@ -636,7 +647,8 @@ out:
  *	Returns 0 on success. Process context only.
  **/
 
-int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq, int pid)
+int mpls_detach_in2out(struct mpls_xconnect_req *req,
+		int seq, int pid)
 {
 	struct mpls_instr  *mi  = NULL;
 	struct mpls_nhlfe  *nhlfe = NULL;
@@ -650,10 +662,10 @@ int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq, int pid)
 
 	/* Hold a ref to the ILM, The 'in' segment */
 	labelspace = req->mx_in.ml_labelspace;
-	key = mpls_label2key(labelspace,&(req->mx_in));
+	key = mpls_label2key(labelspace, &(req->mx_in));
 	ilm = mpls_get_ilm(key);
 	if (unlikely(!ilm)) {
-		MPLS_DEBUG("ILM %u does not exist in radix tree\n",key);
+		MPLS_DEBUG("ILM %u does not exist in radix tree\n", key);
 		ret = -ESRCH;
 		goto out;
 	}
@@ -677,12 +689,12 @@ int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq, int pid)
 
 	/* Get the current held nhlfe for the last in instr */
 	nhlfe = mi->mi_data;
-	key = mpls_label2key(0,&req->mx_out);
+	key = mpls_label2key(0, &req->mx_out);
 
 	/* Make sure it is the good nhlfe */
 	if (!nhlfe || key != nhlfe->nhlfe_key) {
 		/* Do not release the NHLFE, it was invalid */
-		MPLS_DEBUG("Invalid NHLFE  %u\n",key);
+		MPLS_DEBUG("Invalid NHLFE  %u\n", key);
 		ret = -ENXIO;
 		goto out_release;
 	}
@@ -694,7 +706,8 @@ int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq, int pid)
 
 	/* Release the NHLFE held by the Opcode (cf. mpls_attach_in2out) */
 
-	ret = mpls_xc_event(MPLS_GRP_XC_NAME,MPLS_CMD_DELXC, ilm, nhlfe,seq,pid);
+	ret = mpls_xc_event(MPLS_GRP_XC_NAME,
+			MPLS_CMD_DELXC, ilm, nhlfe, seq, pid);
 	mpls_nhlfe_release(nhlfe);
 out_release:
 	/* Release the ILM after use */
@@ -705,18 +718,18 @@ out:
 }
 
 /**
- * 	mpls_init_reserved_label - Add an ILM object a reserved label
+ *	mpls_init_reserved_label - Add an ILM object a reserved label
  *	@label - reserved generic label value
  *	@ilm - ILM object to used for reserved label
  *
  *	Returns 0 on success
  **/
 
-int mpls_add_reserved_label(int label, struct mpls_ilm* ilm)
+int mpls_add_reserved_label(int label, struct mpls_ilm *ilm)
 {
 	BUG_ON(label < 0 || label > 15);
 	MPLS_ENTER;
-	if (mpls_reserved[label].ilm){
+	if (mpls_reserved[label].ilm) {
 		MPLS_EXIT;
 		return -EEXIST;
 	}
@@ -735,9 +748,9 @@ int mpls_add_reserved_label(int label, struct mpls_ilm* ilm)
  *
  **/
 
-struct mpls_ilm *mpls_del_reserved_label (int label)
+struct mpls_ilm *mpls_del_reserved_label(int label)
 {
-	struct mpls_ilm* ilm;
+	struct mpls_ilm *ilm;
 	MPLS_ENTER;
 	BUG_ON(label < 0 || label > 15);
 
@@ -751,10 +764,12 @@ int __init mpls_ilm_init(void)
 {
 	MPLS_ENTER;
 
-	ilm_cachep = kmem_cache_create("ilm_cache", sizeof(struct mpls_ilm), 0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+	ilm_cachep = kmem_cache_create("ilm_cache",
+		sizeof(struct mpls_ilm), 0,
+		SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
 
 	if (!ilm_cachep) {
-		printk("MPLS: failed to alloc ilm_cache\n");
+		printk(KERN_ERR "MPLS: failed to alloc ilm_cache\n");
 		MPLS_EXIT;
 		return -ENOMEM;
 	}
