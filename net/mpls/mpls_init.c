@@ -30,9 +30,10 @@
  * variables controled via sysctl
  **/
 int sysctl_mpls_debug = CONFIG_MPLS_DEBUG;
+EXPORT_SYMBOL(sysctl_mpls_debug);
+
 int sysctl_mpls_default_ttl = 255;
 EXPORT_SYMBOL(sysctl_mpls_default_ttl);
-EXPORT_SYMBOL(sysctl_mpls_debug);
 
 /**
  * MODULE Information and attributes
@@ -75,7 +76,7 @@ static int mpls_release_netdev_in_nhlfe(struct net_device *dev)
 		holder = list_entry(pos, struct mpls_nhlfe , dev_entry);
 
 		/* Destroy the nhlfe entry */
-		mpls_del_nhlfe(holder,0,0);
+		mpls_del_nhlfe(holder, 0, 0);
 		list_del(pos);
 	}
 
@@ -102,11 +103,11 @@ static int mpls_release_netdev_in_ilm(struct net_device *dev)
 	struct mpls_ilm *holder;
 	MPLS_ENTER;
 	/* Iterate all ILM objects present in the list_in of the interface.*/
-	list_for_each_safe(pos,tmp,&mif->list_in) {
+	list_for_each_safe(pos, tmp, &mif->list_in) {
 		holder = list_entry(pos, struct mpls_ilm, dev_entry);
 
 		/* Destroy the instruction list */
-		mpls_del_ilm(holder,0,0);
+		mpls_del_ilm(holder, 0, 0);
 		list_del(pos);
 	}
 
@@ -152,12 +153,13 @@ static int mpls_change_mtu_nhlfe(struct net_device *dev)
  *
  **/
 
-static int mpls_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
+static int mpls_netdev_event(struct notifier_block *this,
+		unsigned long event, void *ptr)
 {
 	struct net_device *dev = ptr;
 	struct mpls_interface *mif = dev->mpls_ptr;
 	MPLS_ENTER;
-	if (!mif){
+	if (!mif) {
 		MPLS_EXIT;
 		return NOTIFY_DONE;
 	}
@@ -204,7 +206,7 @@ static int __net_init mpls_mib_init_net(struct net *net)
 
 #ifdef CONFIG_PROC_FS
 	rv = mpls_proc_init(net);
-	if(rv < 0)
+	if (rv < 0)
 		snmp_mib_free((void __percpu **)net->mib.mpls_statistics);
 #endif
 	return rv;
@@ -247,29 +249,33 @@ static int __init mpls_init_module(void)
 		(MPLS_LINUX_VERSION >> 8) & 0xFF,
 		(MPLS_LINUX_VERSION) & 0xFF);
 	/* Init instruction cache */
-	if((err = mpls_instr_init())){
+	err = mpls_instr_init();
+	if (err)
 		return err;
-	}
+
 	/* Init Input Radix Tree */
-	if ((err = mpls_ilm_init())){
+	err = mpls_ilm_init();
+	if (err)
 		goto cleanup_instr;
-	}
+
 	/* Init Output Radix Tree */
-	if ((err = mpls_nhlfe_init())){
+	err = mpls_nhlfe_init();
+	if (err)
 		goto cleanup_ilm;
-	}
 
 #ifdef CONFIG_SYSCTL
-	if ((err = mpls_sysctl_init())){
+	err = mpls_sysctl_init();
+	if (err)
 		goto cleanup_nhlfe;
-	}
+
 #endif
 	/* Netlink configuration interface */
-	if ((err = mpls_netlink_init())){
+	err = mpls_netlink_init();
+	if (err)
 		goto cleanup_sysctl;
-	}
 
-	if ((err = init_mpls_mibs())){
+	err = init_mpls_mibs()
+	if (err) {
 		printk(KERN_CRIT "mpls_init_module: Cannot init mpls mibs\n");
 		goto cleanup_mib;
 	}
@@ -277,7 +283,7 @@ static int __init mpls_init_module(void)
 	/* packet handlers, and netdev notifier */
 	dev_add_pack(&mpls_uc_packet_type);
 	err = register_netdevice_notifier(&mpls_netdev_notifier);
-	if(err)
+	if (err)
 		goto cleanup_all;
 	MPLS_EXIT;
 	return 0;

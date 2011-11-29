@@ -68,7 +68,8 @@ mpls_input_start:
 	ilm = mpls_get_ilm_by_label(label, labelspace, cb->bos);
 	if (unlikely(!ilm)) {
 		MPLS_DEBUG("unknown incoming label, dropping\n");
-		MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_IFINLABELLOOKUPFAILURES);
+		MPLS_INC_STATS_BH(dev_net(dev),
+			MPLS_MIB_IFINLABELLOOKUPFAILURES);
 		goto mpls_input_drop;
 	}
 
@@ -79,10 +80,10 @@ mpls_input_start:
 		msg    = mpls_ops[opcode].msg;
 		func   = mpls_ops[opcode].in;
 
-		MPLS_DEBUG("opcode %s\n",msg);
+		MPLS_DEBUG("opcode %s\n", msg);
 		if (!func) {
-			MPLS_DEBUG("invalid opcode for input: %s\n",msg);
-			MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INDISCARDS);
+			MPLS_DEBUG("invalid opcode for input: %s\n", msg);
+			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
 			goto mpls_input_drop;
 		}
 
@@ -100,7 +101,7 @@ mpls_input_start:
 		case MPLS_RESULT_FWD:
 			goto mpls_input_fwd;
 		case MPLS_RESULT_DROP:
-			MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INERRORS);
+			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
 			goto mpls_input_drop;
 		case MPLS_RESULT_SUCCESS:
 			break;
@@ -127,7 +128,7 @@ mpls_input_dlv:
 
 	if (ip_hdr(skb)->version == 4)
 		skb->protocol = htons(ETH_P_IP);
-	else if(ip_hdr(skb)->version == 6)
+	else if (ip_hdr(skb)->version == 6)
 		skb->protocol = htons(ETH_P_IPV6);
 	else
 		goto mpls_input_drop;
@@ -150,10 +151,13 @@ mpls_input_dlv:
 mpls_input_fwd:
 
 	/* We are about to mangle packet. Copy it! */
-	if (skb_cow(skb, LL_RESERVED_SPACE(nhlfe->dst.dev)+nhlfe->dst.header_len)){
-		printk_ratelimited(KERN_ERR "unable to cow skb\n");
-		MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INDISCARDS);
-		mpls_ilm_release (ilm);
+	if (skb_cow(skb,
+		LL_RESERVED_SPACE(nhlfe->dst.dev) +
+		nhlfe->dst.header_len)) {
+
+		printk_ratelimited(KERN_ERR "MPLS: unable to cow skb\n");
+		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
+		mpls_ilm_release(ilm);
 	}
 
 	cb = MPLSCB(skb);
@@ -164,9 +168,9 @@ mpls_input_fwd:
 
 		retval = prot->ttl_expired(&skb);
 
-		if (retval){
-			mpls_ilm_release (ilm);
-			MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INERRORS);
+		if (retval) {
+			mpls_ilm_release(ilm);
+			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
 			MPLS_EXIT;
 			return retval;
 		}
@@ -179,7 +183,7 @@ mpls_input_fwd:
 	cb->exp = 0;
 	cb->flag = 0;
 
-	if(cb->popped_bos){
+	if (cb->popped_bos) {
 		cb->bos = 1;
 		skb->protocol = nhlfe->nhlfe_proto->ethertype;
 	} else {
@@ -187,8 +191,9 @@ mpls_input_fwd:
 		skb->protocol = htons(ETH_P_MPLS_UC);
 	}
 
-	MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INPACKETS);
-	MPLS_ADD_STATS_BH(dev_net(dev),MPLS_MIB_INOCTETS, packet_length);
+	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
+	MPLS_ADD_STATS_BH(dev_net(dev),
+		MPLS_MIB_INOCTETS, packet_length);
 
 	/* hold nhlfe before releasing ilm */
 	mpls_nhlfe_hold(nhlfe);
@@ -212,7 +217,9 @@ mpls_input_fwd:
  *	@pt  : packet type handler.
  **/
 
-inline int mpls_skb_recv(struct sk_buff *skb,	struct net_device *dev, struct packet_type *pt, struct net_device *orig)
+inline int mpls_skb_recv(struct sk_buff *skb,
+	struct net_device *dev, struct packet_type *pt,
+	struct net_device *orig)
 {
 	struct mpls_skb_cb *cb;
 	int labelspace;
@@ -224,7 +231,8 @@ inline int mpls_skb_recv(struct sk_buff *skb,	struct net_device *dev, struct pac
 	if (skb->pkt_type == PACKET_OTHERHOST)
 		goto mpls_rcv_drop;
 
-	if (!(skb = skb_share_check (skb, GFP_ATOMIC)))
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (!skb)
 		goto mpls_rcv_err;
 
 	cb = MPLSCB(skb);
@@ -234,8 +242,9 @@ inline int mpls_skb_recv(struct sk_buff *skb,	struct net_device *dev, struct pac
 
 	labelspace = mip ? mip->labelspace : -1;
 	if (unlikely(labelspace < 0)) {
-		MPLS_DEBUG("dev %s has no labelspace, dropped!\n",dev->name);
-		MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_IFINLABELLOOKUPFAILURES);
+		MPLS_DEBUG("dev %s has no labelspace, dropped!\n", dev->name);
+		MPLS_INC_STATS_BH(dev_net(dev),
+			MPLS_MIB_IFINLABELLOOKUPFAILURES);
 		goto mpls_rcv_out;
 	}
 
@@ -258,21 +267,25 @@ inline int mpls_skb_recv(struct sk_buff *skb,	struct net_device *dev, struct pac
 		label.u.ml_gen = cb->label;
 		break;
 	default:
-		MPLS_DEBUG("device %s unknown IfType(%08x)\n", dev->name, dev->type);
+		MPLS_DEBUG("device %s unknown IfType(%08x)\n",
+				dev->name, dev->type);
 		goto mpls_rcv_err;
 	}
 
 	if (mpls_input(skb, dev, &label, labelspace))
-		goto mpls_rcv_out;//don't go to mpls_rcv_drop because we've already incremented drop counter
+		/*	don't go to mpls_rcv_drop
+		 *	because we've already incremented drop counter
+		 */
+		goto mpls_rcv_out;
 
 	MPLS_EXIT;
 	return NET_RX_SUCCESS;
 
 mpls_rcv_err:
-	MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INDISCARDS);
+	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
 	goto mpls_rcv_out;
 mpls_rcv_drop:
-	MPLS_INC_STATS_BH(dev_net(dev),MPLS_MIB_INERRORS);
+	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
 mpls_rcv_out:
 	kfree_skb(skb);
 	MPLS_DEBUG("exit(DROP)\n");

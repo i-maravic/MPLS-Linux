@@ -40,7 +40,7 @@ struct mpls_instr *mpls_instr_alloc(unsigned short opcode)
 	struct mpls_instr  *mi;
 	MPLS_ENTER;
 	mi = kmem_cache_alloc(instr_cachep, GFP_KERNEL);
-	memset(mi,0,sizeof(struct mpls_instr));
+	memset(mi, 0, sizeof(struct mpls_instr));
 	if (likely(mi))
 		mi->mi_opcode = opcode;
 	else {
@@ -68,7 +68,7 @@ void mpls_instr_release(struct mpls_instr *mi)
 	BUG_ON(!mi);
 
 	if ((mpls_ops[op].cleanup) && data)
-		mpls_ops[op].cleanup (data, parent, dir);
+		mpls_ops[op].cleanup(data, parent, dir);
 
 	kmem_cache_free(instr_cachep, mi);
 	MPLS_EXIT;
@@ -110,7 +110,9 @@ void mpls_instrs_free(struct mpls_instr *list)
  *	Returns the number of valid entries.
  **/
 
-int mpls_instrs_build(struct mpls_instr_elem *mie, struct mpls_instr **instr, int length, enum mpls_dir  dir, void *parent)
+int mpls_instrs_build(struct mpls_instr_elem *mie,
+		struct mpls_instr **instr, int length,
+		enum mpls_dir dir, void *parent)
 {
 
 	struct mpls_instr **pmi = instr;  /* Instruction List */
@@ -122,35 +124,43 @@ int mpls_instrs_build(struct mpls_instr_elem *mie, struct mpls_instr **instr, in
 	void *data;
 	int ret = -ENXIO;
 	int push_is_next = 0;
-	int ops_counter[MPLS_OP_MAX]={0};
+	int ops_counter[MPLS_OP_MAX] = {0};
 	MPLS_ENTER;
 
 	BUG_ON(!mie);
 	/* Iterate the instr set */
 	for (i = 0; i < length; i++) {
-		if (last_able){
-			printk (KERN_ERR "MPLS: No ops are allowed after op %s\n", mpls_ops[opcode].msg);
+		if (last_able) {
+			printk(KERN_ERR "MPLS: No ops are allowed"
+					" after op %s\n", mpls_ops[opcode].msg);
 			goto rollback;
 		}
 
 		opcode  = mie[i].mir_opcode;
-		if (opcode == MPLS_OP_DLV && i!=0){
-			printk (KERN_ERR "MPLS: Op %s can exist only alone\n", mpls_ops[opcode].msg);
+		if (opcode == MPLS_OP_DLV && i != 0) {
+			printk(KERN_ERR "MPLS: Op %s can exist"
+					" only alone\n", mpls_ops[opcode].msg);
 			goto rollback;
 		}
 
-		if (push_is_next == 1 && opcode != MPLS_OP_PUSH){
-			printk (KERN_ERR "MPLS: set_exp or tc2exp or ds2exp or nf2exp must be folowed by push\n");
+		if (push_is_next == 1 && opcode != MPLS_OP_PUSH) {
+			printk(KERN_ERR "MPLS: set_exp or tc2exp or ds2exp"
+					" or nf2exp must be folowed by push\n");
 			goto rollback;
-		} else 
+		} else
 			push_is_next = 0;
 
-		if (opcode == MPLS_OP_SET_EXP || opcode == MPLS_OP_TC2EXP || opcode == MPLS_OP_DS2EXP || opcode == MPLS_OP_NF2EXP){
-			push_is_next = 1; // after this ops push must come next!
-		}
+		/*
+		 * after this ops push must come next!
+		 */
+		if (opcode == MPLS_OP_SET_EXP ||
+			opcode == MPLS_OP_TC2EXP ||
+			opcode == MPLS_OP_DS2EXP ||
+			opcode == MPLS_OP_NF2EXP)
+			push_is_next = 1;
 
 		ops_counter[opcode]++;
-		switch(opcode){
+		switch (opcode) {
 		case MPLS_OP_POP:
 		case MPLS_OP_PUSH:
 		case MPLS_OP_SET_EXP:
@@ -161,8 +171,10 @@ int mpls_instrs_build(struct mpls_instr_elem *mie, struct mpls_instr **instr, in
 				in instruction stack*/
 			break;
 		default:
-			if(ops_counter[opcode] > 1){
-				printk (KERN_ERR "MPLS: There can be only one op of type %s\n",	mpls_ops[opcode].msg);
+			if (ops_counter[opcode] > 1) {
+				printk(KERN_ERR "MPLS: There can be only one"
+						" op of type %s\n",
+						mpls_ops[opcode].msg);
 				goto rollback;
 			}
 			break;
@@ -194,7 +206,7 @@ int mpls_instrs_build(struct mpls_instr_elem *mie, struct mpls_instr **instr, in
 
 	/* Make sure the last one was valid */
 	if (!last_able) {
-		printk (KERN_ERR "MPLS: invalid last op %s, len = %d(%d)\n",
+		printk(KERN_ERR "MPLS: invalid last op %s, len = %d(%d)\n",
 				mpls_ops[opcode].msg, i, length);
 		goto rollback;
 	}
@@ -243,10 +255,12 @@ int __init mpls_instr_init(void)
 {
 	MPLS_ENTER;
 
-	instr_cachep = kmem_cache_create("instr_cache", sizeof(struct mpls_instr), 0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+	instr_cachep = kmem_cache_create("instr_cache",
+		sizeof(struct mpls_instr), 0,
+		SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
 
 	if (!instr_cachep) {
-		printk("MPLS: failed to alloc instr_cache\n");
+		printk(KERN_ERR "MPLS: failed to alloc instr_cache\n");
 		MPLS_EXIT;
 		return -ENOMEM;
 	}
