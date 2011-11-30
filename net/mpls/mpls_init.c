@@ -274,7 +274,7 @@ static int __init mpls_init_module(void)
 	if (err)
 		goto cleanup_sysctl;
 
-	err = init_mpls_mibs()
+	err = init_mpls_mibs();
 	if (err) {
 		printk(KERN_CRIT "mpls_init_module: Cannot init mpls mibs\n");
 		goto cleanup_mib;

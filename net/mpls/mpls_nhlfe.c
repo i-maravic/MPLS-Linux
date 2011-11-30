@@ -25,7 +25,7 @@
 
 #include <net/mpls.h>
 #include <linux/uaccess.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <net/dst.h>
 #include <linux/rtnetlink.h>
 #include <linux/in.h>		/* must be before route.h */
@@ -59,7 +59,7 @@ static void              nhlfe_dst_update_pmtu(struct dst_entry *dst, u32 mtu);
 static int               nhlfe_dst_gc(struct dst_ops *ops);
 static struct neighbour *nhlfe_dst_neigh_lookup(const struct dst_entry *dst, const void *daddr);
 
-static struct dst_ops nhlfe_dst_ops __read_mostly= {
+static struct dst_ops nhlfe_dst_ops __read_mostly = {
 	.family	=  AF_MPLS,
 	.protocol = cpu_to_be16(ETH_P_MPLS_UC),
 	.gc	= nhlfe_dst_gc,
@@ -74,7 +74,7 @@ static struct dst_ops nhlfe_dst_ops __read_mostly= {
 	.neigh_lookup = nhlfe_dst_neigh_lookup,
 };
 
-static struct dst_entry *nhlfe_dst_check (struct dst_entry *dst, u32 cookie)
+static struct dst_entry *nhlfe_dst_check(struct dst_entry *dst, u32 cookie)
 {
 	MPLS_ENTER;
 	MPLS_EXIT;
@@ -92,7 +92,7 @@ static unsigned int nhlfe_dst_default_advmss(const struct dst_entry *dst)
 
 static unsigned int nhlfe_dst_mtu(const struct dst_entry *dst)
 {
-	unsigned int mtu = dst_metric_raw(dst, RTAX_MTU);;
+	unsigned int mtu = dst_metric_raw(dst, RTAX_MTU);
 	MPLS_ENTER;
 	if (mtu)
 		goto out;
@@ -118,7 +118,7 @@ static void nhlfe_dst_destroy(struct dst_entry *dst)
 			struct mpls_nhlfe, dst);
 	MPLS_ENTER;
 
-	mpls_proto_release(&nhlfe->nhlfe_proto);
+	mpls_proto_release(nhlfe->nhlfe_proto);
 	dst_destroy_metrics_generic(dst);
 	MPLS_EXIT;
 }
@@ -143,7 +143,7 @@ static void nhlfe_dst_link_failure(struct sk_buff *skb)
 {
 	struct mpls_nhlfe *nhlfe;
 	MPLS_ENTER;
-	printk(KERN_DEBUG "%s: \n", __func__);
+	printk(KERN_DEBUG "%s:\n", __func__);
 	/* icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0);*/
 	nhlfe = (struct mpls_nhlfe *)skb_dst(skb);
 	if (nhlfe)

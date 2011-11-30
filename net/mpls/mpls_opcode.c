@@ -1005,7 +1005,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set)
 
 	/* use the protocol driver to resolve the neighbour */
 	if (nhlfe->nhlfe_proto->nexthop_resolve(dst, nh, dev)) {
-		mpls_proto_release(&nhlfe->nhlfe_proto);
+		mpls_proto_release(nhlfe->nhlfe_proto);
 		dev_put(dev);
 		return -EHOSTUNREACH;
 	}
@@ -1058,7 +1058,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set)
 	neigh_release(dst_get_neighbour(dst));
 	dst_set_neighbour(dst, NULL);
 	rcu_read_unlock();
-	mpls_proto_release(&nhlfe->nhlfe_proto);
+	mpls_proto_release(nhlfe->nhlfe_proto);
 	
 	mpls_list_del_init(&_mpls_as_nhlfe(parent)->dev_entry);
 
