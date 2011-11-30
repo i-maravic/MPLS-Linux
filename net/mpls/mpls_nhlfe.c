@@ -92,12 +92,13 @@ static unsigned int nhlfe_dst_default_advmss(const struct dst_entry *dst)
 
 static unsigned int nhlfe_dst_mtu(const struct dst_entry *dst)
 {
-	unsigned int mtu;
+	unsigned int mtu = dst_metric_raw(dst, RTAX_MTU);;
 	MPLS_ENTER;
-	if (dst->dev)
-		mtu = dst->dev->mtu;
-	else
-		mtu = MPLS_INVALID_MTU;
+	if (mtu)
+		goto out;
+	BUG_ON(!dst->dev);
+	mtu = dst->dev->mtu;
+out:
 	printk(KERN_DEBUG "NHLFE default mtu %u\n", mtu);
 	MPLS_EXIT;
 	return mtu;
