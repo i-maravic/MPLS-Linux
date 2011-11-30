@@ -114,7 +114,8 @@ out:
 
 static void nhlfe_dst_destroy(struct dst_entry *dst)
 {
-	struct mpls_nhlfe *nhlfe = container_of(dst, struct mpls_nhlfe, dst);
+	struct mpls_nhlfe *nhlfe = container_of(dst,
+			struct mpls_nhlfe, dst);
 	MPLS_ENTER;
 
 	mpls_proto_release(&nhlfe->nhlfe_proto);
@@ -207,6 +208,7 @@ struct mpls_nhlfe *nhlfe_dst_alloc(unsigned int key)
 	INIT_LIST_HEAD(&nhlfe->global);
 
 	nhlfe->nhlfe_instr = NULL;
+	nhlfe->nhlfe_proto = NULL;
 	nhlfe->nhlfe_propagate_ttl = 1;
 	nhlfe->nhlfe_age = jiffies;
 	nhlfe->nhlfe_key = key;
@@ -614,9 +616,11 @@ int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
 	mpls_nhlfe_release(nhlfe);
 
 	/* From now on, drop packets */
-	nhlfe->dst.output = dst_discard;
+	nhlfe->dst.input = nhlfe->dst.output = dst_discard;
+	
 
-	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
+	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME,
+		MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
 
 	/* Destroy the instructions on this NHLFE, so as to no longer
 	 * hold refs to interfaces and other NHLFE's. */

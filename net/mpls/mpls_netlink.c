@@ -420,8 +420,7 @@ static int genl_mpls_nhlfe_new(struct sk_buff *skb, struct genl_info *info)
 
 	mol = nla_data(info->attrs[MPLS_ATTR_NHLFE]);
 	
-	if (mol->mol_label.ml_type != MPLS_LABEL_KEY/* ||
-			mol->mol_label.u.ml_key*/){
+	if (mol->mol_label.ml_type != MPLS_LABEL_KEY){
 		MPLS_EXIT;
 		return -EINVAL;
 	}
