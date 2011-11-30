@@ -24,7 +24,7 @@
 
 #include <net/shim.h>
 #include <net/dst.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/init.h>
 #include <linux/mpls.h>
 #include <linux/netdevice.h>
@@ -47,10 +47,10 @@ Debugging macros
 #define MPLS_DEBUG(f, a...) \
 { \
 	if (sysctl_mpls_debug) {\
-		printk (KERN_INFO "MPLS DEBUG %s:%d:%s: ", \
-			__FILE__, __LINE__, __FUNCTION__); \
-		printk (f, ##a); \
-	}\
+		printk(KERN_INFO "MPLS DEBUG %s:%d:%s: ", \
+			__FILE__, __LINE__, __func__); \
+		printk(f, ##a); \
+	} \
 }
 
 #define MPLS_DEBUG_CALL(f) \
@@ -68,10 +68,14 @@ Debugging macros
  * SNMP statistics for MPLS
  */
 
-#define MPLS_INC_STATS(net, field)		SNMP_INC_STATS((net)->mib.mpls_statistics, field)
-#define MPLS_INC_STATS_BH(net, field)		SNMP_INC_STATS_BH((net)->mib.mpls_statistics, field)
-#define MPLS_ADD_STATS(net, field, add)		SNMP_ADD_STATS((net)->mib.mpls_statistics, field, add)
-#define MPLS_ADD_STATS_BH(net, field, add)		SNMP_ADD_STATS_BH((net)->mib.mpls_statistics, field, add)
+#define MPLS_INC_STATS(net, field) SNMP_INC_STATS\
+	((net)->mib.mpls_statistics, field)
+#define MPLS_INC_STATS_BH(net, field) SNMP_INC_STATS_BH\
+	((net)->mib.mpls_statistics, field)
+#define MPLS_ADD_STATS(net, field, add) SNMP_ADD_STATS\
+	((net)->mib.mpls_statistics, field, add)
+#define MPLS_ADD_STATS_BH(net, field, add) SNMP_ADD_STATS_BH\
+	((net)->mib.mpls_statistics, field, add)
 
 /****************************************************************************
  * MPLS Interface "Extension"
@@ -157,7 +161,8 @@ struct mpls_instr {
 	void               *mi_parent;
 };
 
-#define for_each_instr(_instr, _mi)	for (_mi = _instr; _mi; _mi = _mi->mi_next)
+#define for_each_instr(_instr, _mi)	\
+	for (_mi = _instr; _mi; _mi = _mi->mi_next)
 
 
 struct mpls_nfmark_fwd_info {
@@ -210,7 +215,7 @@ struct mpls_nfmark2exp_info {
 void mpls_instrs_free(struct mpls_instr *list);
 int  mpls_instrs_build(struct mpls_instr_elem *mie,
 				struct mpls_instr **instr, int length,
-				enum mpls_dir dir,void *parent);
+				enum mpls_dir dir, void *parent);
 void mpls_instrs_unbuild(struct mpls_instr *instr,
 				struct mpls_instr_req *req);
 
@@ -236,7 +241,8 @@ struct mpls_prot_driver {
 	int	 (*ttl_expired)(struct sk_buff **skb);
 	int	 (*mtu_exceeded)(struct sk_buff **skb, int mtu);
 	int	 (*local_deliver)(struct sk_buff *skb);
-	int	 (*nexthop_resolve)(struct dst_entry *,	struct sockaddr *, struct net_device *);
+	int	 (*nexthop_resolve)(struct dst_entry *,
+		struct sockaddr *, struct net_device *);
 
 	struct module *owner;
 };
@@ -252,9 +258,9 @@ int                      mpls_proto_add(struct mpls_prot_driver *);
 int                      mpls_proto_remove(struct mpls_prot_driver *);
 struct mpls_prot_driver *mpls_proto_find_by_family(unsigned short);
 struct mpls_prot_driver *mpls_proto_find_by_ethertype(unsigned short);
-void                     mpls_proto_cache_flush_all (struct net *);
+void                     mpls_proto_cache_flush_all(struct net *);
 
-static void inline mpls_proto_release(struct mpls_prot_driver *prot)
+static inline void mpls_proto_release(struct mpls_prot_driver *prot)
 {
 	if (!prot)
 		return;
@@ -269,11 +275,11 @@ static void inline mpls_proto_release(struct mpls_prot_driver *prot)
  ****************************************************************************/
 
 struct mpls_ilm {
-	atomic_t 				refcnt;
+	atomic_t				refcnt;
 	struct kmem_cache		*kmem_cachep;
-	struct list_head 		global;
+	struct list_head		global;
 	/* To appear as an entry in the device ILM list */
-	struct list_head 		dev_entry;
+	struct list_head		dev_entry;
 
 	/* List of NHLFE */
 	struct list_head        nhlfe_entry;
@@ -288,7 +294,7 @@ struct mpls_ilm {
 	/* Incoming Labelspace (see doc) */
 	unsigned short           ilm_labelspace;
 	/* Routing protocol */
-    unsigned char            ilm_owner;
+	unsigned char            ilm_owner;
 };
 
 extern struct list_head mpls_ilm_list;
@@ -299,10 +305,10 @@ extern struct list_head mpls_ilm_list;
 
 int               mpls_ilm_init(void);
 void              mpls_ilm_exit(void);
-struct mpls_ilm*  mpls_get_ilm(unsigned int key);
-struct mpls_ilm*  mpls_get_ilm_by_label(struct mpls_label *label,
+struct mpls_ilm *mpls_get_ilm(unsigned int key);
+struct mpls_ilm *mpls_get_ilm_by_label(struct mpls_label *label,
 				int labelspace, char bos);
-extern struct mpls_ilm* mpls_ilm_alloc(unsigned int key,
+extern struct mpls_ilm *mpls_ilm_alloc(unsigned int key,
 				struct mpls_label *ml,
 				struct mpls_instr_elem *instr,
 				int instr_len);
@@ -325,7 +331,7 @@ struct mpls_nhlfe {
 	struct list_head	global;
 
 	/* List of notif*/
-	struct notifier_block*  nhlfe_notifier_list;
+	struct notifier_block	*nhlfe_notifier_list;
 	/* List of ILM that are linked to this NHLFE*/
 	struct list_head        list_in;
 	/* To be added into a device list_out if the NHLFE uses (SET) the dev */
@@ -337,11 +343,11 @@ struct mpls_nhlfe {
 	/* Age in jiffies*/
 	unsigned int            nhlfe_age;
 	/* MTU Limit (e.g. from device MTU + number of pushes*/
-    unsigned short 			nhlfe_mtu_limit;
+	unsigned short			nhlfe_mtu_limit;
 	unsigned char           nhlfe_propagate_ttl;
 
 	/* Routing protocol */
-    unsigned char           nhlfe_owner;
+	unsigned char           nhlfe_owner;
 
 	union {
 		struct sockaddr			common;
@@ -350,7 +356,7 @@ struct mpls_nhlfe {
 	} nhlfe_nexthop;
 
 	/* L3 protocol driver for packets that use this NHLFE */
-    struct mpls_prot_driver *nhlfe_proto;
+	struct mpls_prot_driver *nhlfe_proto;
 };
 #define nhlfe_nh nhlfe_nexthop.common
 
@@ -370,14 +376,14 @@ struct mpls_fwd_block {
 
 int                 mpls_nhlfe_init(void);
 void                mpls_nhlfe_exit(void);
-struct mpls_nhlfe*  mpls_get_nhlfe(unsigned int);
+struct mpls_nhlfe	*mpls_get_nhlfe(unsigned int);
 
 
 /****************************************************************************
  * Helper Functions
  ****************************************************************************/
 
-char                mpls_find_payload(struct sk_buff* skb);
+char                mpls_find_payload(struct sk_buff *skb);
 unsigned int        mpls_label2key(const int, const struct mpls_label*);
 
 
@@ -386,8 +392,9 @@ unsigned int        mpls_label2key(const int, const struct mpls_label*);
  * net/mpls/mpls_input.c
  ****************************************************************************/
 
-int  mpls_skb_recv    (struct sk_buff *skb, struct net_device *dev,
-                              struct packet_type* ptype, struct net_device *orig);
+int  mpls_skb_recv(struct sk_buff *skb,
+	struct net_device *dev, struct packet_type *ptype,
+	struct net_device *orig);
 
 
 /****************************************************************************
@@ -412,7 +419,7 @@ int  mpls_switch(struct sk_buff *skb);
  * data:      opcode dependant data. Cast to NHLFEs, DS marks, etc.
  */
 #define MPLS_OPCODE_PROTOTYPE(NAME) \
-int (NAME) (struct sk_buff** pskb,struct mpls_ilm *ilm, \
+int (NAME) (struct sk_buff **pskb, struct mpls_ilm *ilm, \
 	struct mpls_nhlfe **nhlfe, void *data)
 
 /*
@@ -425,7 +432,7 @@ int (NAME) (struct sk_buff** pskb,struct mpls_ilm *ilm, \
 #define MPLS_BUILD_OPCODE_PROTOTYPE(NAME) \
 int (NAME) (struct mpls_instr_elem *instr, \
 	enum mpls_dir direction, void *parent,\
-        void **data, int *last_able)
+	void **data, int *last_able)
 
 /*
  * instr:     Instruction array.
@@ -481,33 +488,44 @@ static inline void mpls_label_entry_peek(struct sk_buff *skb)
 	cb->label = __MPLS_SHIM_LABEL(shim);
 }
 
-static inline void mpls_nhlfe_update_mtu(struct mpls_nhlfe *nhlfe, unsigned short mtu)
+static inline void mpls_nhlfe_update_mtu(
+	struct mpls_nhlfe *nhlfe, unsigned short mtu)
 {
-	dst_metric_set(&nhlfe->dst, RTAX_MTU, mtu - nhlfe->dst.header_len);
+	dst_metric_set(&nhlfe->dst, RTAX_MTU,
+		mtu - nhlfe->dst.header_len);
 	nhlfe->nhlfe_mtu_limit = dst_mtu(&nhlfe->dst);
 }
 
 /* Query/Update Incoming Labels */
 struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in);
 struct mpls_ilm *mpls_get_ilm_label(const struct mpls_in_label_req *in);
-int  mpls_del_in_label(struct mpls_in_label_req *in,int seq, int pid);
-int  mpls_add_reserved_label(int label, struct mpls_ilm* ilm);
-struct mpls_ilm* mpls_del_reserved_label (int label);
-int mpls_ilm_set_instrs(struct mpls_in_label_req *mil, struct mpls_instr_elem *mie, int length);
-int _mpls_ilm_set_instrs(struct mpls_ilm *ilm, struct mpls_instr_elem *mie, int length);
-int mpls_del_ilm(struct mpls_ilm *ilm,int seq,int pid);
+int  mpls_del_in_label(struct mpls_in_label_req *in,
+	int seq, int pid);
+int  mpls_add_reserved_label(int label, struct mpls_ilm *ilm);
+struct mpls_ilm *mpls_del_reserved_label(int label);
+int mpls_ilm_set_instrs(struct mpls_in_label_req *mil,
+	struct mpls_instr_elem *mie, int length);
+int _mpls_ilm_set_instrs(struct mpls_ilm *ilm,
+	struct mpls_instr_elem *mie, int length);
+int mpls_del_ilm(struct mpls_ilm *ilm,
+	int seq, int pid);
 
 /* Query/Update Outgoing Labels */
 struct mpls_nhlfe *mpls_add_out_label(struct mpls_out_label_req *out);
 struct mpls_nhlfe *mpls_get_nhlfe_label(struct mpls_out_label_req *out);
-int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid);
+int mpls_del_out_label(struct mpls_out_label_req *out,
+	int seq, int pid);
 int mpls_set_out_label_mtu(struct mpls_out_label_req *out);
-int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol, struct mpls_instr_elem *mie, int length);
-int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid);
+int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol,
+	struct mpls_instr_elem *mie, int length);
+int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe,
+	int seq, int pid);
 
 /* Query/Update Crossconnects */
-int mpls_attach_in2out(struct mpls_xconnect_req *req,int seq,int pid);
-int mpls_detach_in2out(struct mpls_xconnect_req *req,int seq,int pid);
+int mpls_attach_in2out(struct mpls_xconnect_req *req,
+	int seq, int pid);
+int mpls_detach_in2out(struct mpls_xconnect_req *req,
+	int seq, int pid);
 
 /* Instruction Management */
 int mpls_set_out_label_propagate_ttl(struct mpls_out_label_req *mol);
@@ -521,7 +539,7 @@ void mpls_instr_exit(void);
 static inline struct mpls_instr *mpls_instr_getlast(struct mpls_instr *instr)
 {
 	struct mpls_instr *mi;
-	for (mi = instr; mi->mi_next; mi = mi->mi_next); /* noop */
+	for (mi = instr; mi->mi_next; mi = mi->mi_next);/* noop */
 	return mi;
 }
 
@@ -545,20 +563,26 @@ static inline int __mpls_get_labelspace(struct net_device *dev)
 	return mif ? mif->labelspace : -1;
 }
 
-int mpls_set_labelspace(struct mpls_labelspace_req *req,int seq, int pid);
+int mpls_set_labelspace(struct mpls_labelspace_req *req,
+	int seq, int pid);
 
 /* Netlink event notification */
-int mpls_ilm_event(char* grp_name, int event, struct mpls_ilm *ilm, int seq, int pid);
-int mpls_nhlfe_event(char* grp_name, int event, struct mpls_nhlfe *nhlfe, int seq, int pid);
-int mpls_labelspace_event(char* grp_name, int event, struct net_device *dev, int seq, int pid);
-int mpls_xc_event(char* grp_name, int event, struct mpls_ilm *ilm,	struct mpls_nhlfe *nhlfe, int seq, int pid);
+int mpls_ilm_event(char *grp_name, int event,
+	struct mpls_ilm *ilm, int seq, int pid);
+int mpls_nhlfe_event(char *grp_name, int event,
+	struct mpls_nhlfe *nhlfe, int seq, int pid);
+int mpls_labelspace_event(char *grp_name, int event,
+	struct net_device *dev, int seq, int pid);
+int mpls_xc_event(char *grp_name, int event,
+	struct mpls_ilm *ilm, struct mpls_nhlfe *nhlfe,
+	int seq, int pid);
 
 /****************************************************************************
  * REFERENCE COUNT MANAGEMENT
  ****************************************************************************/
 
 /* Hold */
-static inline struct mpls_ilm* mpls_ilm_hold(struct mpls_ilm* ilm)
+static inline struct mpls_ilm *mpls_ilm_hold(struct mpls_ilm *ilm)
 {
 	BUG_ON(!ilm);
 	atomic_inc(&ilm->refcnt);
@@ -567,16 +591,16 @@ static inline struct mpls_ilm* mpls_ilm_hold(struct mpls_ilm* ilm)
 
 
 /* Release */
-static inline void mpls_ilm_release(struct mpls_ilm* ilm)
+static inline void mpls_ilm_release(struct mpls_ilm *ilm)
 {
 	BUG_ON(!ilm);
 	if (atomic_dec_and_test(&ilm->refcnt))
-	 	kmem_cache_free(ilm->kmem_cachep, ilm);
+		kmem_cache_free(ilm->kmem_cachep, ilm);
 }
 
 
 /* Hold */
-static inline struct mpls_nhlfe* mpls_nhlfe_hold(struct mpls_nhlfe* nhlfe)
+static inline struct mpls_nhlfe *mpls_nhlfe_hold(struct mpls_nhlfe *nhlfe)
 {
 	BUG_ON(!nhlfe);
 	dst_hold(&nhlfe->dst);
@@ -584,7 +608,7 @@ static inline struct mpls_nhlfe* mpls_nhlfe_hold(struct mpls_nhlfe* nhlfe)
 }
 
 /* Release */
-static inline void mpls_nhlfe_release(struct mpls_nhlfe* nhlfe)
+static inline void mpls_nhlfe_release(struct mpls_nhlfe *nhlfe)
 {
 	BUG_ON(!nhlfe);
 	dst_release(&nhlfe->dst);
@@ -625,8 +649,8 @@ void  mpls_proc_exit(struct net *net);
  * net/mpls/mpls_netlink.c
  ****************************************************************************/
 
-int  mpls_netlink_init (void);
-void mpls_netlink_exit (void);
+int  mpls_netlink_init(void);
+void mpls_netlink_exit(void);
 
 /****************************************************************************
  * Virtual Intefaces (Tunnel) Management
@@ -646,10 +670,10 @@ struct mpls_tunnel_private {
 };
 
 
-struct net_device* mpls_tunnel_get_by_name(const char* name);
-struct net_device* mpls_tunnel_get(struct mpls_tunnel_req *mt);
+struct net_device *mpls_tunnel_get_by_name(const char *name);
+struct net_device *mpls_tunnel_get(struct mpls_tunnel_req *mt);
 void               mpls_tunnel_put(struct net_device *dev);
-struct net_device* mpls_tunnel_create(struct mpls_tunnel_req *mt);
+struct net_device *mpls_tunnel_create(struct mpls_tunnel_req *mt);
 void               mpls_tunnel_destroy(struct mpls_tunnel_req *mt);
 
 /* Casts */
