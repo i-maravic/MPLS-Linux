@@ -9,7 +9,7 @@
  *
  * Authors:
  *          James Leu        <jleu@mindspring.com>
- *			Igor Maravić	 <igorm@etf.rs> 
+ *			Igor Maravić	 <igorm@etf.rs>
  *
  *      This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License
@@ -27,18 +27,28 @@
 /*
  * The following few functions build the content of /proc/net/mpls
  */
- 
+
 static const struct snmp_mib mpls_mib_list[] = {
-	SNMP_MIB_ITEM("mplsInterfacePerfInLabelLookupFailures", MPLS_MIB_IFINLABELLOOKUPFAILURES),
-	SNMP_MIB_ITEM("mplsInterfacePerfOutFragmentedPkts", MPLS_MIB_IFOUTFRAGMENTEDPKTS),
-	SNMP_MIB_ITEM("mplsInSegmentPerfOctets", MPLS_MIB_INOCTETS),
-	SNMP_MIB_ITEM("mplsInSegmentPerfPackets", MPLS_MIB_INPACKETS),
-	SNMP_MIB_ITEM("mplsInSegmentPerfErrors", MPLS_MIB_INERRORS),
-	SNMP_MIB_ITEM("mplsInSegmentPerfDiscards", MPLS_MIB_INDISCARDS),
-	SNMP_MIB_ITEM("mplsOutSegmentPerfOctets", MPLS_MIB_OUTOCTETS),
-	SNMP_MIB_ITEM("mplsOutSegmentPerfPackets", MPLS_MIB_OUTPACKETS),
-	SNMP_MIB_ITEM("mplsOutSegmentPerfErrors", MPLS_MIB_OUTERRORS),
-	SNMP_MIB_ITEM("mplsOutSegmentPerfDiscards", MPLS_MIB_OUTDISCARDS),
+	SNMP_MIB_ITEM("mplsInterfacePerfInLabelLookupFailures",
+		MPLS_MIB_IFINLABELLOOKUPFAILURES),
+	SNMP_MIB_ITEM("mplsInterfacePerfOutFragmentedPkts",
+		MPLS_MIB_IFOUTFRAGMENTEDPKTS),
+	SNMP_MIB_ITEM("mplsInSegmentPerfOctets",
+		MPLS_MIB_INOCTETS),
+	SNMP_MIB_ITEM("mplsInSegmentPerfPackets",
+		MPLS_MIB_INPACKETS),
+	SNMP_MIB_ITEM("mplsInSegmentPerfErrors",
+		MPLS_MIB_INERRORS),
+	SNMP_MIB_ITEM("mplsInSegmentPerfDiscards",
+		MPLS_MIB_INDISCARDS),
+	SNMP_MIB_ITEM("mplsOutSegmentPerfOctets",
+		MPLS_MIB_OUTOCTETS),
+	SNMP_MIB_ITEM("mplsOutSegmentPerfPackets",
+		MPLS_MIB_OUTPACKETS),
+	SNMP_MIB_ITEM("mplsOutSegmentPerfErrors",
+		MPLS_MIB_OUTERRORS),
+	SNMP_MIB_ITEM("mplsOutSegmentPerfDiscards",
+		MPLS_MIB_OUTDISCARDS),
 	SNMP_MIB_SENTINEL
 };
 
@@ -47,7 +57,7 @@ static int mpls_stats_seq_show(struct seq_file *seq, void *v)
 {
 	struct net *net = seq->private;
 	int i;
-	for (i=0; mpls_mib_list[i].name; i++)
+	for (i = 0; mpls_mib_list[i].name; i++)
 		seq_printf(seq, "%-24s\t%lu\n", mpls_mib_list[i].name,
 			   snmp_fold_field((void __percpu **)
 					   net->mib.mpls_statistics,

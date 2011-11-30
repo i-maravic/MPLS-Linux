@@ -95,7 +95,7 @@ struct mpls_key {
 
 
 
-/** 
+/**
  *	mpls_label2key - Obtain a lookup key given a index or labelspace
  *	and a label value.
  *	@index: labelspace
@@ -107,7 +107,7 @@ struct mpls_key {
  *	Bugs: RCAS: this function must be *faast* optimize!
  **/
 
-unsigned int mpls_label2key (const int index, const struct mpls_label *label)
+unsigned int mpls_label2key(const int index, const struct mpls_label *label)
 {
 	struct mpls_key temp;
 
@@ -150,19 +150,19 @@ EXPORT_SYMBOL(mpls_label2key);
  *
  **/
 
-char mpls_find_payload(struct sk_buff* skb)
+char mpls_find_payload(struct sk_buff *skb)
 {
 	unsigned char *ptr = skb->data;
 	unsigned char count = 0;
 	u32 shim;
 	MPLS_ENTER;
-	if (MPLSCB(skb)->popped_bos){
+	if (MPLSCB(skb)->popped_bos) {
 		MPLS_EXIT;
 		return count;
 	}
 
 try_again:
-	if (ptr > skb_tail_pointer(skb)){
+	if (ptr > skb_tail_pointer(skb)) {
 		MPLS_EXIT;
 		return -1;
 	}
@@ -173,7 +173,7 @@ try_again:
 	ptr = &ptr[MPLS_HDR_LEN];
 	count += MPLS_HDR_LEN;
 
-	if ((shim >> 8) & 0x1){
+	if ((shim >> 8) & 0x1) {
 		MPLS_EXIT;
 		return count;
 	}
@@ -182,5 +182,4 @@ try_again:
 	MPLS_EXIT;
 	return 0;
 }
-
 EXPORT_SYMBOL(mpls_find_payload);

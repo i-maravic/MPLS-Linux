@@ -107,7 +107,8 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_pop)
 	 * Check that we have not popped the last label and
 	 * make sure that we can pull
 	 */
-	if (cb->popped_bos || ((skb->data + MPLS_HDR_LEN) >= skb_tail_pointer(skb))) {
+	if (cb->popped_bos || ((skb->data + MPLS_HDR_LEN) >=
+		skb_tail_pointer(skb))) {
 		MPLS_EXIT;
 		return MPLS_RESULT_DROP;
 	}
@@ -119,10 +120,9 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_pop)
 		cb->popped_bos = 1;
 
 	skb_pull(skb, MPLS_HDR_LEN);
-	//skb_reset_transport_header(skb);
 	skb_reset_network_header(skb);
 
-	if(!cb->popped_bos)
+	if (!cb->popped_bos)
 		mpls_label_entry_peek(skb);
 
 	MPLS_EXIT;
@@ -226,7 +226,9 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_push)
 	cb->label = label;
 	cb->bos = 0;
 	cb->popped_bos = 0;
-	//reset exp so the next shim would have it reseted
+	/*
+	 * reset exp so the next shim would have it reseted
+	 */
 	cb->exp = 0;
 
 	skb->protocol = htons(ETH_P_MPLS_UC);
@@ -246,7 +248,9 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_push)
 		MPLS_DEBUG("PUSH only valid for outgoing labels\n");
 		return -EINVAL;
 	}
-	//gen label type is only supported for now
+	/*
+	 * gen label type is only supported for now
+	 */
 	if (ml->ml_type != MPLS_LABEL_GEN) {
 		MPLS_DEBUG("invalid label type (%d)\n", ml->ml_type);
 		return -EINVAL;
@@ -260,7 +264,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_push)
 	}
 
 	ml = _mpls_as_label(*data);
-	memcpy(ml,&instr->mir_push, sizeof(*ml));
+	memcpy(ml, &instr->mir_push, sizeof(*ml));
 	pnhlfe->dst.header_len += MPLS_HDR_LEN;
 
 	MPLS_EXIT;
@@ -306,11 +310,12 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_push)
 inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_dlv)
 {
 	MPLS_ENTER;
-	while(!MPLSCB(*pskb)->popped_bos){
-		if(mpls_in_op_pop(pskb,ilm,nhlfe,data) != MPLS_RESULT_SUCCESS){
+	while (!MPLSCB(*pskb)->popped_bos) {
+		if (mpls_in_op_pop(pskb, ilm, nhlfe, data) !=
+			MPLS_RESULT_SUCCESS) {
 			MPLS_EXIT;
 			return MPLS_RESULT_DROP;
-		}			
+		}
 	}
 	MPLS_EXIT;
 	return MPLS_RESULT_DLV;
@@ -351,7 +356,7 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_fwd)
 {
 	MPLS_ENTER;
 	BUG_ON(!data);
-	*nhlfe = (struct mpls_nhlfe*)data;
+	*nhlfe = (struct mpls_nhlfe *)data;
 	MPLS_EXIT;
 	return MPLS_RESULT_FWD;
 }
@@ -370,8 +375,8 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_fwd)
 		return -EINVAL;
 	}
 
-	*data = NULL; 
-	/* 
+	*data = NULL;
+	/*
 	 * Get NHLFE to apply given key
 	 */
 	key = mpls_label2key(0, &instr->mir_fwd);
@@ -411,7 +416,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_fwd)
 	MPLS_ENTER;
 	/* Remove parent NHLFE from this NHLFE list */
 	mpls_list_del_init(&_mpls_as_ilm(parent)->nhlfe_entry);
-	mpls_nhlfe_release(_mpls_as_nhlfe(data)); 
+	mpls_nhlfe_release(_mpls_as_nhlfe(data));
 	MPLS_EXIT;
 }
 
@@ -439,7 +444,7 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_nf_fwd)
 	struct mpls_nfmark_fwd_info *nfi = data;
 	MPLS_ENTER;
 	*nhlfe = nfi->nfi_nhlfe[(*pskb)->mark & nfi->nfi_mask];
-	if (unlikely(!(*nhlfe))){
+	if (unlikely(!(*nhlfe))) {
 		MPLS_EXIT;
 		return MPLS_RESULT_DROP;
 	}
@@ -471,12 +476,12 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_nf_fwd)
 	if (nfi->nfi_mask >= MPLS_NFMARK_NUM) {
 		MPLS_DEBUG("NF_FWD mask(%02x) allows too large values\n",
 				nfi->nfi_mask);
-		kfree (nfi);
+		kfree(nfi);
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 
-	for (j=0; j<MPLS_NFMARK_NUM; j++) {
+	for (j = 0; j < MPLS_NFMARK_NUM; j++) {
 		int i;
 		key = instr->mir_nf_fwd.nf_key[j];
 		if (!key)
@@ -485,17 +490,18 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_nf_fwd)
 		nhlfe = mpls_get_nhlfe(key);
 		if (unlikely(!nhlfe)) {
 			MPLS_DEBUG("NF_FWD: NHLFE - key %08x not found\n", key);
-			kfree (nfi);
+			kfree(nfi);
 			MPLS_EXIT;
 			return -ESRCH;
 		}
 		if (dst_mtu(&nhlfe->dst) < min_mtu)
 			min_mtu = dst_mtu(&nhlfe->dst);
 
-		for (i=0; i<MPLS_NFMARK_NUM; i++){
-			if((i & nfi->nfi_mask) == (j & nfi->nfi_mask) && !nfi->nfi_nhlfe[i])
+		for (i = 0; i < MPLS_NFMARK_NUM; i++) {
+			if ((i & nfi->nfi_mask) == (j & nfi->nfi_mask)
+				&& !nfi->nfi_nhlfe[i])
 				nfi->nfi_nhlfe[i] = nhlfe;
-		}		
+		}
 	}
 
 	/*
@@ -506,7 +512,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_nf_fwd)
 	if (direction == MPLS_OUT)
 		mpls_nhlfe_update_mtu(_mpls_as_nhlfe(parent), min_mtu);
 
-	*data = (void*)nfi;
+	*data = (void *)nfi;
 	*last_able = 1;
 	MPLS_EXIT;
 	return 0;
@@ -524,7 +530,7 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_nf_fwd)
 	nfi = _mpls_as_nfi(data);
 	instr->mir_nf_fwd.nf_mask = nfi->nfi_mask;
 
-	for (j=0; j<MPLS_NFMARK_NUM; j++) {
+	for (j = 0; j < MPLS_NFMARK_NUM; j++) {
 		nhlfe = nfi->nfi_nhlfe[j];
 
 		key = (nhlfe) ? nhlfe->nhlfe_key : 0;
@@ -538,7 +544,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_nf_fwd)
 {
 	int i;
 	MPLS_ENTER;
-	for (i=0;i<MPLS_NFMARK_NUM;i++) {
+	for (i = 0; i < MPLS_NFMARK_NUM; i++) {
 		struct mpls_nhlfe *nhlfe = _mpls_as_nfi(data)->nfi_nhlfe[i];
 		mpls_nhlfe_release_safe(&nhlfe);
 	}
@@ -574,7 +580,7 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_ds_fwd)
 	ds = MPLSCB(*pskb)->prot->get_dsfield(*pskb) & dfi->dfi_mask;
 
 	*nhlfe = dfi->dfi_nhlfe[ds];
-	if (unlikely(!*nhlfe)){
+	if (unlikely(!*nhlfe)) {
 		MPLS_EXIT;
 		return MPLS_RESULT_DROP;
 	}
@@ -583,14 +589,14 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_ds_fwd)
 }
 
 
-MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_ds_fwd) 
+MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_ds_fwd)
 {
 	struct mpls_dsmark_fwd_info *dfi = NULL;
 	struct mpls_nhlfe *nhlfe = NULL;
 	unsigned int min_mtu = MPLS_INVALID_MTU;
 	unsigned int key = 0;
 	int j = 0;
-	
+
 	MPLS_ENTER;
 	*data = NULL;
 	/* Allocate DFI object to store in data */
@@ -612,12 +618,12 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_ds_fwd)
 		return -EINVAL;
 	}
 
-	for (j=0; j<MPLS_DSMARK_NUM; j++) {
+	for (j = 0; j < MPLS_DSMARK_NUM; j++) {
 		int i;
 		key = instr->mir_ds_fwd.df_key[j];
-		if (!key) {
+		if (!key)
 			continue;
-		}
+
 		nhlfe = mpls_get_nhlfe(key);
 		if (unlikely(!nhlfe)) {
 			MPLS_DEBUG("DS_FWD: NHLFE key %08x not found\n", key);
@@ -625,11 +631,12 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_ds_fwd)
 			MPLS_EXIT;
 			return -ESRCH;
 		}
-		if (dst_mtu(&nhlfe->dst) < min_mtu) {
+		if (dst_mtu(&nhlfe->dst) < min_mtu)
 			min_mtu = dst_mtu(&nhlfe->dst);
-		}
-		for (i=0; i<MPLS_DSMARK_NUM; i++){
-			if((i & dfi->dfi_mask) == (j & dfi->dfi_mask) && !dfi->dfi_nhlfe[i])
+
+		for (i = 0; i < MPLS_DSMARK_NUM; i++) {
+			if ((i & dfi->dfi_mask) == (j & dfi->dfi_mask)
+				&& !dfi->dfi_nhlfe[i])
 				dfi->dfi_nhlfe[i] = nhlfe;
 		}
 	}
@@ -642,7 +649,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_ds_fwd)
 	if (direction == MPLS_OUT)
 		mpls_nhlfe_update_mtu(_mpls_as_nhlfe(parent), min_mtu);
 
-	*data = (void*)dfi;
+	*data = (void *)dfi;
 	*last_able = 1;
 	MPLS_EXIT;
 	return 0;
@@ -660,7 +667,7 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_ds_fwd)
 	dfi = _mpls_as_dfi(data);
 	instr->mir_ds_fwd.df_mask = dfi->dfi_mask;
 
-	for(j=0; j<MPLS_DSMARK_NUM; j++) {
+	for (j = 0; j < MPLS_DSMARK_NUM; j++) {
 		nhlfe = dfi->dfi_nhlfe[j];
 
 		key = (nhlfe) ? nhlfe->nhlfe_key : 0;
@@ -674,7 +681,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_ds_fwd)
 {
 	int i;
 	MPLS_ENTER;
-	for (i=0;i<MPLS_DSMARK_NUM;i++) {
+	for (i = 0; i < MPLS_DSMARK_NUM; i++) {
 		struct mpls_nhlfe *nhlfe = _mpls_as_dfi(data)->dfi_nhlfe[i];
 		mpls_nhlfe_release_safe(&nhlfe);
 	}
@@ -708,7 +715,7 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_exp_fwd)
 	 */
 	MPLS_ENTER;
 	*nhlfe = efi->efi_nhlfe[MPLSCB(*pskb)->exp & 0x7];
-	if (unlikely(!*nhlfe)){
+	if (unlikely(!*nhlfe)) {
 		MPLS_EXIT;
 		return MPLS_RESULT_DROP;
 	}
@@ -736,11 +743,11 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_exp_fwd)
 	}
 
 	/* Set up NHLFE objects for each EXP value, given the keys */
-	for (j=0; j<MPLS_EXP_NUM; j++) {
+	for (j = 0; j < MPLS_EXP_NUM; j++) {
 		key = instr->mir_exp_fwd.ef_key[j];
-		if (!key) {
+		if (!key)
 			continue;
-		}
+
 		nhlfe = mpls_get_nhlfe(key);
 		if (unlikely(!nhlfe)) {
 			MPLS_DEBUG("EXP_FWD: NHLFE key %08x not found\n", key);
@@ -748,9 +755,9 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_exp_fwd)
 			MPLS_EXIT;
 			return -ESRCH;
 		}
-		if (dst_mtu(&nhlfe->dst) < min_mtu) {
+		if (dst_mtu(&nhlfe->dst) < min_mtu)
 			min_mtu = dst_mtu(&nhlfe->dst);
-		}
+
 		efi->efi_nhlfe[j] = nhlfe;
 	}
 
@@ -760,7 +767,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_exp_fwd)
 	if (direction == MPLS_OUT)
 		mpls_nhlfe_update_mtu(_mpls_as_nhlfe(parent), min_mtu);
 
-	*data = (void*)efi;
+	*data = (void *)efi;
 	*last_able = 1;
 	MPLS_EXIT;
 	return 0;
@@ -777,7 +784,7 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_exp_fwd)
 
 	efi = _mpls_as_efi(data);
 
-	for(j=0; j<MPLS_EXP_NUM; j++) {
+	for (j = 0; j < MPLS_EXP_NUM; j++) {
 		nhlfe = efi->efi_nhlfe[j];
 
 		key = (nhlfe) ? nhlfe->nhlfe_key : 0;
@@ -793,7 +800,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_exp_fwd)
 	int i;
 	MPLS_ENTER;
 
-	for (i=0; i<MPLS_EXP_NUM; i++) {
+	for (i = 0; i < MPLS_EXP_NUM; i++) {
 		struct mpls_nhlfe *nhlfe = _mpls_as_efi(data)->efi_nhlfe[i];
 		mpls_nhlfe_release_safe(&nhlfe);
 	}
@@ -833,8 +840,8 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_set_rx)
 
 MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_rx)
 {
-	struct mpls_interface *mpls_if = NULL; 
-	struct mpls_ilm *pilm = NULL; 
+	struct mpls_interface *mpls_if = NULL;
+	struct mpls_ilm *pilm = NULL;
 	struct net_device *dev = NULL;
 	unsigned int if_index = 0; /* Incoming If Index */
 
@@ -863,13 +870,13 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_rx)
 	if (__mpls_get_labelspace(dev) == -1) {
 		MPLS_DEBUG("SET_RX - device %s ifindex %d MPLS disabled\n",
 				dev->name, if_index);
-		dev_put (dev);
+		dev_put(dev);
 		MPLS_EXIT;
 		return -ESRCH;
 	}
 	mpls_if = dev->mpls_ptr;
 
-	*data = (void*)dev;
+	*data = (void *)dev;
 
 	/*
 	 * Add to the device list of ILMs (list_in)
@@ -896,7 +903,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set_rx)
 	struct net_device *dev = NULL;
 	/* dev is already being held */
 	MPLS_ENTER;
-	dev = _mpls_as_netdev(data); 
+	dev = _mpls_as_netdev(data);
 	mpls_list_del_init(&_mpls_as_ilm(parent)->dev_entry);
 	dev_put(dev);
 	MPLS_EXIT;
@@ -915,7 +922,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set_rx)
  * OUTPUT : true
  * DATA   : Reference to NHLFE cache entry (struct mpls_nhlfe *)
  * LAST   : true
- * 
+ *
  * Remark : If the interface goes down/unregistered, mpls_netdev_event
  *          (cf. mpls_init.c) will change this opcode.
  *********************************************************************/
@@ -993,7 +1000,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set)
 		memset(nh, 0, sizeof(instr->mir_set.mni_nh));
 		nh->sa_family = AF_INET;
 	}
-	
+
 	nhlfe->nhlfe_proto = mpls_proto_find_by_family(nh->sa_family);
 	if (unlikely(!nhlfe->nhlfe_proto)) {
 		dev_put(dev);
@@ -1015,12 +1022,12 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set)
 	 */
 	mpls_nhlfe_update_mtu(nhlfe, dev->mtu);
 
-	/* 
-	 * Add to the device list of NHLFEs (list_out) 
-	 * 
+	/*
+	 * Add to the device list of NHLFEs (list_out)
+	 *
 	 */
 	list_add(&nhlfe->dev_entry, &mpls_if->list_out);
-	*data = (void*)nhlfe;
+	*data = (void *)nhlfe;
 	*last_able = 1;
 	MPLS_EXIT;
 	return 0;
@@ -1033,9 +1040,10 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_set)
 
 	MPLS_ENTER;
 
-	memcpy(&instr->mir_set.mni_addr, &nhlfe->nhlfe_nh, sizeof(nhlfe->nhlfe_nexthop));
+	memcpy(&instr->mir_set.mni_addr,
+		&nhlfe->nhlfe_nh, sizeof(nhlfe->nhlfe_nexthop));
 	instr->mir_set.mni_if = nhlfe->dst.dev->ifindex;
-	
+
 	MPLS_EXIT;
 }
 
@@ -1059,7 +1067,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set)
 	dst_set_neighbour(dst, NULL);
 	rcu_read_unlock();
 	mpls_proto_release(nhlfe->nhlfe_proto);
-	
+
 	mpls_list_del_init(&_mpls_as_nhlfe(parent)->dev_entry);
 
 	MPLS_EXIT;
@@ -1102,7 +1110,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_tc)
 		return -ENOMEM;
 	}
 	*tc   = instr->mir_set_tc;
-	*data = (void*)tc;
+	*data = (void *)tc;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1152,7 +1160,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_ds)
 	unsigned char  *ds = NULL;
 	MPLS_ENTER;
 	*data = NULL;
-	ds = kzalloc(sizeof(*ds),GFP_ATOMIC);
+	ds = kzalloc(sizeof(*ds), GFP_ATOMIC);
 	if (unlikely(!ds)) {
 		MPLS_DEBUG("SET_DS error building DS info\n");
 		MPLS_EXIT;
@@ -1160,11 +1168,11 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_ds)
 	}
 	*ds = instr->mir_set_ds;
 	if (*ds > 0x3f) {
-		MPLS_DEBUG("SET_DS DS(%02x) too big\n",*ds);
+		MPLS_DEBUG("SET_DS DS(%02x) too big\n", *ds);
 		MPLS_EXIT;
 		return -EINVAL;
 	}
-	*data = (void*)ds;
+	*data = (void *)ds;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1185,11 +1193,11 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_set_ds)
  * EXEC   : mpls_op_set_exp
  * BUILD  : mpls_build_opcode_set_exp
  * UNBUILD: mpls_unbuild_opcode_set_exp
- * CLEAN  : mpls_clean_opcode_generic 
- * INPUT  : true 
- * OUTPUT : true 
- * DATA   : EXP value (binary 000-111) (unsigned char *) 
- * LAST   : false 
+ * CLEAN  : mpls_clean_opcode_generic
+ * INPUT  : true
+ * OUTPUT : true
+ * DATA   : EXP value (binary 000-111) (unsigned char *)
+ * LAST   : false
  *********************************************************************/
 
 inline MPLS_OPCODE_PROTOTYPE(mpls_op_set_exp)
@@ -1215,7 +1223,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_exp)
 	}
 
 	*data = NULL;
-	exp = kzalloc(sizeof(*exp),GFP_ATOMIC);
+	exp = kzalloc(sizeof(*exp), GFP_ATOMIC);
 	if (unlikely(!exp)) {
 		MPLS_DEBUG("SET_EXP error building EXP info\n");
 		MPLS_EXIT;
@@ -1223,12 +1231,12 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_exp)
 	}
 	*exp = instr->mir_set_exp;
 	if (*exp >= MPLS_EXP_NUM) {
-		MPLS_DEBUG("SET_EXP EXP(%d) too big\n",*exp);
+		MPLS_DEBUG("SET_EXP EXP(%d) too big\n", *exp);
 		kfree(exp);
 		MPLS_EXIT;
 		return -EINVAL;
 	}
-	*data = (void*)exp;
+	*data = (void *)exp;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1294,11 +1302,11 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_exp2tc)
 	 * Define (as per instruction) how to map EXP values
 	 * to TC indexes
 	 */
-	for (j = 0; j<MPLS_EXP_NUM; j++) {
+	for (j = 0; j < MPLS_EXP_NUM; j++)
 		e2ti->e2t[j] = instr->mir_exp2tc.e2t[j];
-	}
 
-	*data = (void*)e2ti;
+
+	*data = (void *)e2ti;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1310,9 +1318,8 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_exp2tc)
 
 	MPLS_ENTER;
 
-	for(j=0; j<MPLS_EXP_NUM; j++) {
+	for (j = 0; j < MPLS_EXP_NUM; j++)
 		instr->mir_exp2tc.e2t[j] = e2ti->e2t[j];
-	}
 
 	MPLS_EXIT;
 }
@@ -1361,7 +1368,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_exp2ds)
 	/*
 	 * Allocate e2di object
 	 */
-	e2di = kzalloc(sizeof(*e2di),GFP_ATOMIC);
+	e2di = kzalloc(sizeof(*e2di), GFP_ATOMIC);
 	if (unlikely(!e2di)) {
 		MPLS_DEBUG("error building DSMARK info\n");
 		MPLS_EXIT;
@@ -1372,10 +1379,10 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_exp2ds)
 	 * Define (as per instruction) how to map EXP values
 	 * to DS fields.
 	 */
-	for (j = 0; j<MPLS_EXP_NUM; j++) {
+	for (j = 0; j < MPLS_EXP_NUM; j++)
 		e2di->e2d[j] = instr->mir_exp2ds.e2d[j];
-	}
-	*data = (void*)e2di;
+
+	*data = (void *)e2di;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1387,9 +1394,8 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_exp2ds)
 
 	MPLS_ENTER;
 
-	for(j=0; j<MPLS_EXP_NUM; j++) {
+	for (j = 0; j < MPLS_EXP_NUM; j++)
 		instr->mir_exp2ds.e2d[j] = e2di->e2d[j];
-	}
 
 	MPLS_EXIT;
 }
@@ -1447,7 +1453,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_tc2exp)
 	t2ei->t2e_mask = instr->mir_tc2exp.t2e_mask;
 	if (t2ei->t2e_mask >= MPLS_TCINDEX_NUM) {
 		MPLS_DEBUG("TC2EXP mask(%02x) too large\n", t2ei->t2e_mask);
-		kfree (t2ei);
+		kfree(t2ei);
 		MPLS_EXIT;
 		return -EINVAL;
 	}
@@ -1456,14 +1462,15 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_tc2exp)
 	 * Define (as per instruction) how to map TC indexes
 	 * to EXP bits
 	 */
-	for (j = 0; j<MPLS_TCINDEX_NUM; j++) {
+	for (j = 0; j < MPLS_TCINDEX_NUM; j++) {
 		int i;
-		for(i = j; i < MPLS_TCINDEX_NUM;i++){
-			if ((j & t2ei->t2e_mask) == (i & t2ei->t2e_mask) && !t2ei->t2e[i])
+		for (i = j; i < MPLS_TCINDEX_NUM; i++) {
+			if ((j & t2ei->t2e_mask) == (i & t2ei->t2e_mask)
+				&& !t2ei->t2e[i])
 				t2ei->t2e[i] = instr->mir_tc2exp.t2e[j];
 		}
 	}
-	*data = (void*)t2ei;
+	*data = (void *)t2ei;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1477,7 +1484,7 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_tc2exp)
 
 	instr->mir_tc2exp.t2e_mask = t2ei->t2e_mask;
 
-	for (j=0; j<MPLS_TCINDEX_NUM; j++)
+	for (j = 0; j < MPLS_TCINDEX_NUM; j++)
 		instr->mir_tc2exp.t2e[j] = t2ei->t2e[j];
 
 	MPLS_EXIT;
@@ -1545,16 +1552,18 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_ds2exp)
 	 * Define (as per instruction) how to map DS marks
 	 * to EXP bits
 	 */
-	for (j = 0; j<MPLS_DSMARK_NUM; j++) {
+	for (j = 0; j < MPLS_DSMARK_NUM; j++) {
 		int i;
-		for(i = j; i < MPLS_DSMARK_NUM;i++){
-			if (((j & d2ei->d2e_mask) == (i & d2ei->d2e_mask)) && !d2ei->d2e[j]){
-				MPLS_DEBUG("i: %d, j: %d, value: %d\n",i,j,instr->mir_ds2exp.d2e[j]);
+		for (i = j; i < MPLS_DSMARK_NUM; i++) {
+			if (((j & d2ei->d2e_mask) == (i & d2ei->d2e_mask))
+				&& !d2ei->d2e[j]) {
+				MPLS_DEBUG("i: %d, j: %d, value: %d\n",
+					i, j, instr->mir_ds2exp.d2e[j]);
 				d2ei->d2e[i] = instr->mir_ds2exp.d2e[j];
 			}
-		}		
+		}
 	}
-	*data = (void*)d2ei;
+	*data = (void *)d2ei;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1568,9 +1577,8 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_ds2exp)
 
 	instr->mir_ds2exp.d2e_mask = d2ei->d2e_mask;
 
-	for (j=0; j<MPLS_DSMARK_NUM; j++) {
+	for (j = 0; j < MPLS_DSMARK_NUM; j++)
 		instr->mir_ds2exp.d2e[j] = d2ei->d2e[j];
-	}
 
 	MPLS_EXIT;
 }
@@ -1621,7 +1629,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_nf2exp)
 	 * Allocate d2ei object
 	 */
 	n2ei = kzalloc(sizeof(*n2ei), GFP_ATOMIC);
-	if(unlikely(!n2ei)) {
+	if (unlikely(!n2ei)) {
 		MPLS_DEBUG("NF2EXP error building EXP info\n");
 		MPLS_EXIT;
 		return -ENOMEM;
@@ -1632,7 +1640,8 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_nf2exp)
 	 */
 	n2ei->n2e_mask = instr->mir_nf2exp.n2e_mask;
 	if (n2ei->n2e_mask >= MPLS_NFMARK_NUM) {
-		MPLS_DEBUG("NF2EXP mask(%02x) too large\n", n2ei->n2e_mask);
+		MPLS_DEBUG("NF2EXP mask(%02x) too large\n",
+			n2ei->n2e_mask);
 		kfree(n2ei);
 		MPLS_EXIT;
 		return -EINVAL;
@@ -1642,14 +1651,15 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_nf2exp)
 	 * Define (as per instruction) how to map NF marks
 	 * to EXP bits
 	 */
-	for (j = 0; j<MPLS_NFMARK_NUM; j++) {
+	for (j = 0; j < MPLS_NFMARK_NUM; j++) {
 		int i;
-		for(i = 0; i < MPLS_NFMARK_NUM;i++){
-			if ((j & n2ei->n2e_mask) == (i & n2ei->n2e_mask) && !n2ei->n2e[i])
+		for (i = 0; i < MPLS_NFMARK_NUM; i++) {
+			if ((j & n2ei->n2e_mask) == (i & n2ei->n2e_mask) &&
+				!n2ei->n2e[i])
 				n2ei->n2e[i] = instr->mir_nf2exp.n2e[j];
-		}		
+		}
 	}
-	*data = (void*)n2ei;
+	*data = (void *)n2ei;
 	MPLS_EXIT;
 	return 0;
 }
@@ -1663,9 +1673,8 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_nf2exp)
 
 	instr->mir_nf2exp.n2e_mask = n2ei->n2e_mask;
 
-	for(j=0; j<MPLS_NFMARK_NUM; j++) {
+	for (j = 0; j < MPLS_NFMARK_NUM; j++)
 		instr->mir_nf2exp.n2e[j] = n2ei->n2e[j];
-	}
 
 	MPLS_EXIT;
 }

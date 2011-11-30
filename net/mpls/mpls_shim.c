@@ -5,7 +5,7 @@
  *
  * Authors:
  *          James Leu        <jleu@mindspring.com>
- *			Igor Maravić     <igorm@etf.rs> 
+ *			Igor Maravić     <igorm@etf.rs>
  *
  *   (c) 1999-2005   James Leu        <jleu@mindspring.com>
  *
@@ -37,7 +37,8 @@ inline int mpls_set_nexthop2(struct mpls_nhlfe *nhlfe, struct dst_entry *dst)
 	dst->child = &nhlfe->dst;
 	dst->header_len = nhlfe->dst.header_len;
 
-	MPLS_DEBUG("nhlfe: %p mtu: %d dst: %p\n", nhlfe, dst_mtu(&nhlfe->dst), dst);
+	MPLS_DEBUG("nhlfe: %p mtu: %d dst: %p\n",
+			nhlfe, dst_mtu(&nhlfe->dst), dst);
 
 	MPLS_EXIT;
 	return 0;
