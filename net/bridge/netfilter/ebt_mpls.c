@@ -93,7 +93,7 @@ destroy(const struct xt_tgdtor_param *par)
 {
 	struct xt_MPLS_target_info *mplsinfo = par->targinfo;
 	struct mpls_nhlfe *nhlfe = mplsinfo->nhlfe;
-	struct mpls_prot_driver **proto = (struct mpls_prot_driver **) &mplsinfo->proto;
+	struct mpls_prot_driver *proto = (struct mpls_prot_driver *) mplsinfo->proto;
 
 	MPLS_ENTER;
 	if (nhlfe) {
