@@ -43,6 +43,7 @@
 #include <linux/rculist.h>
 #include <linux/dmaengine.h>
 #include <linux/workqueue.h>
+#include <linux/dynamic_queue_limits.h>
 
 #include <linux/ethtool.h>
 #include <net/net_namespace.h>
@@ -517,11 +518,23 @@ static inline void napi_synchronize(const struct napi_struct *n)
 #endif
 
 enum netdev_queue_state_t {
-	__QUEUE_STATE_XOFF,
+	__QUEUE_STATE_DRV_XOFF,
+	__QUEUE_STATE_STACK_XOFF,
 	__QUEUE_STATE_FROZEN,
-#define QUEUE_STATE_XOFF_OR_FROZEN ((1 << __QUEUE_STATE_XOFF)		| \
-				    (1 << __QUEUE_STATE_FROZEN))
+#define QUEUE_STATE_ANY_XOFF ((1 << __QUEUE_STATE_DRV_XOFF)		| \
+			      (1 << __QUEUE_STATE_STACK_XOFF))
+#define QUEUE_STATE_ANY_XOFF_OR_FROZEN (QUEUE_STATE_ANY_XOFF		| \
+					(1 << __QUEUE_STATE_FROZEN))
 };
+/*
+ * __QUEUE_STATE_DRV_XOFF is used by drivers to stop the transmit queue.  The
+ * netif_tx_* functions below are used to manipulate this flag.  The
+ * __QUEUE_STATE_STACK_XOFF flag is used by the stack to stop the transmit
+ * queue independently.  The netif_xmit_*stopped functions below are called
+ * to check if the queue has been stopped by the driver or stack (either
+ * of the XOFF bits are set in the state).  Drivers should not need to call
+ * netif_xmit*stopped functions, they should only be using netif_tx_*.
+ */
 
 struct netdev_queue {
 /*
@@ -529,7 +542,6 @@ struct netdev_queue {
  */
 	struct net_device	*dev;
 	struct Qdisc		*qdisc;
-	unsigned long		state;
 	struct Qdisc		*qdisc_sleeping;
 #ifdef CONFIG_SYSFS
 	struct kobject		kobj;
@@ -552,6 +564,12 @@ struct netdev_queue {
 	 * (/sys/class/net/DEV/Q/trans_timeout)
 	 */
 	unsigned long		trans_timeout;
+
+	unsigned long		state;
+
+#ifdef CONFIG_BQL
+	struct dql		dql;
+#endif
 } ____cacheline_aligned_in_smp;
 
 static inline int netdev_queue_numa_node_read(const struct netdev_queue *q)
@@ -1721,7 +1739,7 @@ extern void __netif_schedule(struct Qdisc *q);
 
 static inline void netif_schedule_queue(struct netdev_queue *txq)
 {
-	if (!test_bit(__QUEUE_STATE_XOFF, &txq->state))
+	if (!(txq->state & QUEUE_STATE_ANY_XOFF))
 		__netif_schedule(txq->qdisc);
 }
 
@@ -1735,7 +1753,7 @@ static inline void netif_tx_schedule_all(struct net_device *dev)
 
 static inline void netif_tx_start_queue(struct netdev_queue *dev_queue)
 {
-	clear_bit(__QUEUE_STATE_XOFF, &dev_queue->state);
+	clear_bit(__QUEUE_STATE_DRV_XOFF, &dev_queue->state);
 }
 
 /**
@@ -1767,7 +1785,7 @@ static inline void netif_tx_wake_queue(struct netdev_queue *dev_queue)
 		return;
 	}
 #endif
-	if (test_and_clear_bit(__QUEUE_STATE_XOFF, &dev_queue->state))
+	if (test_and_clear_bit(__QUEUE_STATE_DRV_XOFF, &dev_queue->state))
 		__netif_schedule(dev_queue->qdisc);
 }
 
@@ -1799,7 +1817,7 @@ static inline void netif_tx_stop_queue(struct netdev_queue *dev_queue)
 		pr_info("netif_stop_queue() cannot be called before register_netdev()\n");
 		return;
 	}
-	set_bit(__QUEUE_STATE_XOFF, &dev_queue->state);
+	set_bit(__QUEUE_STATE_DRV_XOFF, &dev_queue->state);
 }
 
 /**
@@ -1826,7 +1844,7 @@ static inline void netif_tx_stop_all_queues(struct net_device *dev)
 
 static inline int netif_tx_queue_stopped(const struct netdev_queue *dev_queue)
 {
-	return test_bit(__QUEUE_STATE_XOFF, &dev_queue->state);
+	return test_bit(__QUEUE_STATE_DRV_XOFF, &dev_queue->state);
 }
 
 /**
@@ -1840,9 +1858,68 @@ static inline int netif_queue_stopped(const struct net_device *dev)
 	return netif_tx_queue_stopped(netdev_get_tx_queue(dev, 0));
 }
 
-static inline int netif_tx_queue_frozen_or_stopped(const struct netdev_queue *dev_queue)
+static inline int netif_xmit_stopped(const struct netdev_queue *dev_queue)
 {
-	return dev_queue->state & QUEUE_STATE_XOFF_OR_FROZEN;
+	return dev_queue->state & QUEUE_STATE_ANY_XOFF;
+}
+
+static inline int netif_xmit_frozen_or_stopped(const struct netdev_queue *dev_queue)
+{
+	return dev_queue->state & QUEUE_STATE_ANY_XOFF_OR_FROZEN;
+}
+
+static inline void netdev_tx_sent_queue(struct netdev_queue *dev_queue,
+					unsigned int bytes)
+{
+#ifdef CONFIG_BQL
+	dql_queued(&dev_queue->dql, bytes);
+	if (unlikely(dql_avail(&dev_queue->dql) < 0)) {
+		set_bit(__QUEUE_STATE_STACK_XOFF, &dev_queue->state);
+		if (unlikely(dql_avail(&dev_queue->dql) >= 0))
+			clear_bit(__QUEUE_STATE_STACK_XOFF,
+			    &dev_queue->state);
+	}
+#endif
+}
+
+static inline void netdev_sent_queue(struct net_device *dev, unsigned int bytes)
+{
+	netdev_tx_sent_queue(netdev_get_tx_queue(dev, 0), bytes);
+}
+
+static inline void netdev_tx_completed_queue(struct netdev_queue *dev_queue,
+					     unsigned pkts, unsigned bytes)
+{
+#ifdef CONFIG_BQL
+	if (likely(bytes)) {
+		dql_completed(&dev_queue->dql, bytes);
+		if (unlikely(test_bit(__QUEUE_STATE_STACK_XOFF,
+		    &dev_queue->state) &&
+		    dql_avail(&dev_queue->dql) >= 0)) {
+			if (test_and_clear_bit(__QUEUE_STATE_STACK_XOFF,
+			     &dev_queue->state))
+				netif_schedule_queue(dev_queue);
+		}
+	}
+#endif
+}
+
+static inline void netdev_completed_queue(struct net_device *dev,
+					  unsigned pkts, unsigned bytes)
+{
+	netdev_tx_completed_queue(netdev_get_tx_queue(dev, 0), pkts, bytes);
+}
+
+static inline void netdev_tx_reset_queue(struct netdev_queue *q)
+{
+#ifdef CONFIG_BQL
+	dql_reset(&q->dql);
+#endif
+}
+
+static inline void netdev_reset_queue(struct net_device *dev_queue)
+{
+	netdev_tx_reset_queue(netdev_get_tx_queue(dev_queue, 0));
 }
 
 /**
@@ -1929,7 +2006,7 @@ static inline void netif_wake_subqueue(struct net_device *dev, u16 queue_index)
 	if (netpoll_trap())
 		return;
 #endif
-	if (test_and_clear_bit(__QUEUE_STATE_XOFF, &txq->state))
+	if (test_and_clear_bit(__QUEUE_STATE_DRV_XOFF, &txq->state))
 		__netif_schedule(txq->qdisc);
 }
 
