@@ -15,7 +15,7 @@
  *
  * Authors:
  *   (c) 1999-2005   James Leu        <jleu@mindspring.com>
- *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr> 
+ *   (c) 2003-2004   Ramon Casellas   <casellas@infres.enst.fr>
  *   (c) 2011        Igor Maravić     <igorm@etf.rs>
  *
  *      This program is free software; you can redistribute it and/or
@@ -77,7 +77,8 @@ MODULE_LICENSE("GPL");
  *	       NHLFE will be held by the device private part.
  **/
 
-static int mpls_tunnel_set_nhlfe(struct net_device* dev, unsigned int key) 
+static int mpls_tunnel_set_nhlfe(
+	struct net_device *dev,	unsigned int key)
 {
 	struct mpls_nhlfe *nhlfe = NULL;
 	struct mpls_nhlfe *newnhlfe = NULL;
@@ -103,7 +104,7 @@ static int mpls_tunnel_set_nhlfe(struct net_device* dev, unsigned int key)
 	/* Get a reference for new NHLFE */
 	newnhlfe = mpls_get_nhlfe(key);
 	if (unlikely(!newnhlfe)) {
-		MPLS_DEBUG("error fetching new nhlfe with key %u\n",key);
+		MPLS_DEBUG("error fetching new nhlfe with key %u\n", key);
 		MPLS_DEBUG("keeping old nhlfe %x\n", nhlfe->nhlfe_key);
 		MPLS_EXIT;
 		return -ESRCH;
@@ -159,8 +160,8 @@ static void mpls_tunnel_destructor(struct net_device *dev)
  *	NHLFE (e.g. PUSH/.../SET) for the device
  **/
 
-static int 
-mpls_tunnel_xmit (struct sk_buff *skb, struct net_device *dev) 
+static int mpls_tunnel_xmit(struct sk_buff *skb,
+					struct net_device *dev)
 {
 	int result = 0;
 	struct mpls_nhlfe *nhlfe = mpls_dev2mtp(dev)->mtp_nhlfe;
@@ -170,12 +171,12 @@ mpls_tunnel_xmit (struct sk_buff *skb, struct net_device *dev)
 	if (nhlfe) {
 		MPLS_DEBUG(
 				"Skb to Send\n"
-				"Device %s \n"
+				"Device %s\n"
 				"DST %p\n"
 				"Protocol ID %04x\n",
-				skb->dev? skb->dev->name : "<>",
-						skb_dst(skb) ? skb_dst(skb) : NULL,
-								ntohs(skb->protocol)
+				skb->dev ? skb->dev->name : "<>",
+				skb_dst(skb) ? skb_dst(skb) : NULL,
+				ntohs(skb->protocol)
 		);
 
 		MPLS_DEBUG("Using NHLFE %08x\n", nhlfe->nhlfe_key);
@@ -188,7 +189,7 @@ mpls_tunnel_xmit (struct sk_buff *skb, struct net_device *dev)
 
 		result = dst_output(skb);
 		MPLS_EXIT;
-		return result; 
+		return result;
 	}
 
 	dev_kfree_skb(skb);
@@ -199,11 +200,12 @@ mpls_tunnel_xmit (struct sk_buff *skb, struct net_device *dev)
 }
 
 /**
- *	mpls_tunnel_get_stats - get sender statistics for this tunnel 
+ *	mpls_tunnel_get_stats - get sender statistics for this tunnel
  *	@dev: virtual "mpls%d" device.
  **/
 
-static struct net_device_stats *mpls_tunnel_get_stats(struct net_device *dev) 
+static struct net_device_stats *mpls_tunnel_get_stats(
+		struct net_device *dev)
 {
 	return &((mpls_dev2mtp(dev))->stat);
 }
@@ -216,14 +218,15 @@ static struct net_device_stats *mpls_tunnel_get_stats(struct net_device *dev)
  *	Called by dev_set_mtu (see net/code/dev.c). May veto the new value.
  *	Returns 0 if Ok. -EINVAL otherwise.
  *  IMAR:
- *		MTU assigment is done here because function dev_set_mtu doesn't do mtu assigment!!!
+ *		MTU assigment is done here because
+ *		function dev_set_mtu doesn't do mtu assigment!!!
  **/
 
 static int mpls_tunnel_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct dst_entry *dst = &mpls_dev2mtp(dev)->mtp_nhlfe->dst;
 	MPLS_ENTER;
-	if ((new_mtu < MPLS_HDR_LEN) || (new_mtu > dst_mtu(dst))){
+	if ((new_mtu < MPLS_HDR_LEN) || (new_mtu > dst_mtu(dst))) {
 			MPLS_EXIT;
 			return -EINVAL;
 	}
@@ -241,13 +244,15 @@ static int mpls_tunnel_alloc(struct mpls_tunnel_req *mtr)
 
 	MPLS_ENTER;
 	retval = -ESRCH;
-	if (mtr->mt_nhlfe_key && !(nhlfe = mpls_get_nhlfe(mtr->mt_nhlfe_key)))
+	nhlfe = mpls_get_nhlfe(mtr->mt_nhlfe_key;
+	if (mtr->mt_nhlfe_key && !nhlfe)
 		goto error;
 
 	retval = -ENOMEM;
 	snprintf(mtr->mt_ifname, IFNAMSIZ, "mpls%d", mpls_tunnel_key++);
-	if (!(dev = alloc_netdev (sizeof(struct mpls_tunnel_private),
-			mtr->mt_ifname, mpls_tunnel_setup))) {
+	dev = alloc_netdev(sizeof(struct mpls_tunnel_private),
+			mtr->mt_ifname, mpls_tunnel_setup);
+	if (!dev) {
 		mpls_nhlfe_release(nhlfe);
 		goto error;
 	}
@@ -261,16 +266,18 @@ static int mpls_tunnel_alloc(struct mpls_tunnel_req *mtr)
 
 	mpls_dev2mtp(dev)->mtp_nhlfe = nhlfe;
 	/* Set new MTU for the tunnel device */
-	dev_set_mtu(dev,dst_mtu(&nhlfe->dst));
+	dev_set_mtu(dev, dst_mtu(&nhlfe->dst));
 	dev_hold(dev);
 	retval = 0;
 error:
-	MPLS_DEBUG("Retval: %d\n",retval);
+	MPLS_DEBUG("Retval: %d\n", retval);
 	MPLS_EXIT;
 	return retval;
 }
 
-static struct net_device *mpls_tunnel_lookup(struct mpls_tunnel_req *mtr) {
+static struct net_device *mpls_tunnel_lookup(
+	struct mpls_tunnel_req *mtr)
+{
 	struct net_device *dev;
 	MPLS_ENTER;
 	dev = __dev_get_by_name(&init_net, mtr->mt_ifname);
@@ -305,7 +312,8 @@ mpls_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 				break;
 
 			retval = -ENOENT;
-			if (!(dev = mpls_tunnel_lookup(&mtr)))
+			dev = mpls_tunnel_lookup(&mtr);
+			if (!dev)
 				break;
 
 			retval = -EINVAL;
@@ -324,7 +332,7 @@ mpls_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		if (!capable(CAP_NET_ADMIN))
 			break;
 
-		if(mtr.mt_nhlfe_key == 0)
+		if (mtr.mt_nhlfe_key == 0)
 			break;
 
 		if (dev == mpls_tunnel_dev) {
@@ -333,7 +341,8 @@ mpls_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 				break;
 
 			retval = -ENOENT;
-			if (!(dev = mpls_tunnel_lookup(&mtr)))
+			dev = mpls_tunnel_lookup(&mtr);
+			if (!dev)
 				break;
 
 			retval = -EINVAL;
@@ -362,7 +371,8 @@ mpls_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 			break;
 		}
 
-		retval = mpls_tunnel_set_nhlfe(mpls_mtp2dev(mtp), mtr.mt_nhlfe_key);
+		retval = mpls_tunnel_set_nhlfe(mpls_mtp2dev(mtp),
+				mtr.mt_nhlfe_key);
 		break;
 
 	case SIOCDELTUNNEL:
@@ -376,7 +386,8 @@ mpls_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 				break;
 
 			retval = -ENOENT;
-			if (!(dev = mpls_tunnel_lookup(&mtr)))
+			dev = mpls_tunnel_lookup(&mtr);
+			if (!dev)
 				break;
 
 			retval = -EINVAL;
@@ -456,26 +467,26 @@ static void mpls_tunnel_setup(struct net_device *dev)
 /**
  *	mpls_tunnel_init_module - main tunnel init routine.
  *
- *	Init method called when the module is loaded, initiliazes the 
- *	list of created tunnels to zero, initializes and registers the 
- *	mpls_tunnel kset (which depends on the mpls subsystem) and creates
- *	/proc/net/mpls/tunnel entry.
+ *	Init method called when the module is loaded, initiliazes the
+ *	list of created tunnels to zero, initializes and registers the
+ *	mpls_tunnel kset (which depends on the mpls subsystem)
+ *	and creates /proc/net/mpls/tunnel entry.
  **/
 
-static int __init 
-mpls_tunnel_init_module (void) 
+static int __init mpls_tunnel_init_module(void)
 {
 	struct mpls_tunnel_private *mtp;
 	int retval = -EINVAL;
 	MPLS_ENTER;
-	mpls_tunnel_dev = alloc_netdev (sizeof(struct mpls_tunnel_private),
+	mpls_tunnel_dev =
+		alloc_netdev(sizeof(struct mpls_tunnel_private),
 			"mpls0", mpls_tunnel_setup);
 	if (unlikely(!mpls_tunnel_dev)) {
 		retval = -ENOMEM;
 		goto err;
 	}
-
-	if (unlikely((retval = register_netdev(mpls_tunnel_dev)))) {
+	retval = register_netdev(mpls_tunnel_dev);
+	if (unlikely(retval)) {
 		free_netdev(mpls_tunnel_dev);
 		goto err;
 	}
@@ -505,12 +516,11 @@ static void __exit mpls_destroy_tunnels(void)
 
 /**
  *	mpls_tunnel_exit_module - Module unload exit method.
- *	
+ *
  **/
 
-static void __exit 
-mpls_tunnel_exit_module (void) 
-{	
+static void __exit mpls_tunnel_exit_module(void)
+{
 	MPLS_ENTER;
 	mpls_destroy_tunnels();
 	MPLS_EXIT;

@@ -43,10 +43,11 @@ static inline int mpls_send(struct sk_buff *skb)
 	struct dst_entry *dst = skb_dst(skb);
 	struct neighbour *neigh;
 
-	MPLS_DEBUG("output device = %s\n",skb->dev->name);
-	
+	MPLS_DEBUG("output device = %s\n", skb->dev->name);
+
 	/* Be paranoid, rather than too clever. */
-	if (unlikely(skb_headroom(skb) < LL_RESERVED_SPACE(skb->dev) && skb->dev->header_ops)) {
+	if (unlikely(skb_headroom(skb) < LL_RESERVED_SPACE(skb->dev)
+			&& skb->dev->header_ops)) {
 		struct sk_buff *skb2;
 
 		skb2 = skb_realloc_headroom(skb, LL_RESERVED_SPACE(skb->dev));
@@ -59,10 +60,10 @@ static inline int mpls_send(struct sk_buff *skb)
 		kfree_skb(skb);
 		skb = skb2;
 	}
-	
+
 	rcu_read_lock();
 	neigh = dst_get_neighbour(dst);
-	if (neigh){
+	if (neigh) {
 		int res = neigh_output(neigh, skb);
 		MPLS_EXIT;
 		rcu_read_unlock();
@@ -87,13 +88,15 @@ static inline int mpls_send(struct sk_buff *skb)
  *	iterates the set of output opcodes that are configured for this NHLFE.
  **/
 
-static inline int mpls_finish_output(struct sk_buff *skb, struct mpls_nhlfe *nhlfe)
+static inline int mpls_finish_output(
+	struct sk_buff *skb,
+	struct mpls_nhlfe *nhlfe)
 {
 	struct mpls_instr *mi;
 	int ret = -EINVAL;
 	int ready_to_tx = 0;
 	unsigned int packet_length;
-	struct net_device* dev = skb_dst(skb)->dev;
+	struct net_device *dev = skb_dst(skb)->dev;
 
 	MPLS_OUT_OPCODE_PROTOTYPE(*func);
 
@@ -109,19 +112,21 @@ static inline int mpls_finish_output(struct sk_buff *skb, struct mpls_nhlfe *nhl
 	/* Iterate all the opcodes for this NHLFE */
 	for_each_instr(nhlfe->nhlfe_instr, mi) {
 		int opcode = mi->mi_opcode;
-		void* data = mi->mi_data;
-		char* msg  = mpls_ops[opcode].msg;
+		void *data = mi->mi_data;
+		char *msg  = mpls_ops[opcode].msg;
 
-		MPLS_DEBUG("opcode %s\n",msg);
+		MPLS_DEBUG("opcode %s\n", msg);
 
 		if (mpls_ops[opcode].extra)
 			ready_to_tx = 1;
-
-		if ((func = mpls_ops[opcode].out)) {
-			switch ( func (&skb, NULL, &nhlfe, data)) {
+		func = mpls_ops[opcode].out;
+		if (func) {
+			switch (func(&skb, NULL, &nhlfe, data)) {
 			case MPLS_RESULT_SUCCESS:
-				//it's ready to tx only if the opcode is SET
-				if(ready_to_tx)
+				/*
+				 * it's ready to tx only if the opcode is SET
+				 */
+				if (ready_to_tx)
 					goto send;
 				break;
 			case MPLS_RESULT_DROP:
@@ -140,8 +145,9 @@ static inline int mpls_finish_output(struct sk_buff *skb, struct mpls_nhlfe *nhl
 send:
 	if (skb->len > dev->mtu) {
 		int mtu = dst_mtu(&nhlfe->dst);
-		printk(KERN_DEBUG "packet size %d exceeded device MTU %d (%d)\n",
-				skb->len, dev->mtu, mtu);
+		printk(KERN_DEBUG "packet size %d"
+			" exceeded device MTU %d (%d)\n",
+			skb->len, dev->mtu, mtu);
 		ret = nhlfe->nhlfe_proto->mtu_exceeded(&skb, mtu);
 		if (ret)
 			goto out_drop;
@@ -154,8 +160,9 @@ send:
 	/* Send to the hardware */
 	ret = mpls_send(skb);
 	if (likely(ret == NET_XMIT_SUCCESS || ret == NET_XMIT_CN)) {
-		MPLS_INC_STATS(dev_net(dev),MPLS_MIB_OUTPACKETS);
-		MPLS_ADD_STATS(dev_net(dev),MPLS_MIB_OUTOCTETS, packet_length);
+		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTPACKETS);
+		MPLS_ADD_STATS(dev_net(dev), MPLS_MIB_OUTOCTETS,
+			packet_length);
 	} else {
 out_drop:
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTERRORS);
@@ -163,7 +170,7 @@ out_drop:
 out_discard:
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTDISCARDS);
 out:
-		if(ready_to_tx)
+		if (ready_to_tx)
 			mpls_nhlfe_release_safe(&nhlfe);
 
 		kfree_skb(skb);
@@ -212,8 +219,10 @@ inline int mpls_output(struct sk_buff *skb)
 		printk(KERN_ERR "MPLS: unable to find NHLFE from dst\n");
 		goto mpls_output_drop;
 	}
-	if (unlikely(skb->protocol != nhlfe->nhlfe_proto->ethertype)) {
-		printk_ratelimited(KERN_ERR "unable to find a protocol driver (0x%x)\n",htons(skb->protocol));
+	if (unlikely(skb->protocol !=
+		nhlfe->nhlfe_proto->ethertype)) {
+		printk_ratelimited(KERN_ERR "unable to find a protocol"
+			" driver (0x%x)\n", htons(skb->protocol));
 		goto mpls_output_drop;
 	}
 
@@ -237,7 +246,7 @@ inline int mpls_output(struct sk_buff *skb)
 	MPLS_EXIT;
 
 mpls_output_drop:
-	MPLS_INC_STATS(dev_net(skb->dev),MPLS_MIB_OUTDISCARDS);
+	MPLS_INC_STATS(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
 	kfree_skb(skb);
 	MPLS_EXIT;
 	return -EINVAL;
@@ -257,7 +266,7 @@ mpls_output_drop:
  **/
 inline int mpls_switch(struct sk_buff *skb)
 {
-	struct mpls_nhlfe* nhlfe = NULL;
+	struct mpls_nhlfe *nhlfe = NULL;
 
 	MPLS_ENTER;
 	if (unlikely(!skb_dst(skb))) {
@@ -273,15 +282,17 @@ inline int mpls_switch(struct sk_buff *skb)
 		printk_ratelimited(KERN_ERR "MPLS: unable to find NHLFE from dst\n");
 		goto mpls_switch_drop;
 	}
-	if (unlikely(skb->protocol != nhlfe->nhlfe_proto->ethertype && skb->protocol != htons(ETH_P_MPLS_UC))) {
-		printk_ratelimited(KERN_ERR "MPLS: unable to find a protocol driver (0x%x)\n", htons(skb->protocol));
+	if (unlikely(skb->protocol != nhlfe->nhlfe_proto->ethertype
+			&& skb->protocol != htons(ETH_P_MPLS_UC))) {
+		printk_ratelimited(KERN_ERR "MPLS: unable to find a"
+			" protocol driver (0x%x)\n", htons(skb->protocol));
 		goto mpls_switch_drop;
 	}
 	return mpls_finish_output(skb, nhlfe);
 	MPLS_EXIT;
 
 mpls_switch_drop:
-	MPLS_INC_STATS(dev_net(skb->dev),MPLS_MIB_OUTDISCARDS);
+	MPLS_INC_STATS(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
 	kfree_skb(skb);
 	MPLS_EXIT;
 	return -EINVAL;

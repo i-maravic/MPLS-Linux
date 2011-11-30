@@ -57,7 +57,9 @@ static struct dst_entry *nhlfe_dst_negative_advice(struct dst_entry *dst);
 static void              nhlfe_dst_link_failure(struct sk_buff *skb);
 static void              nhlfe_dst_update_pmtu(struct dst_entry *dst, u32 mtu);
 static int               nhlfe_dst_gc(struct dst_ops *ops);
-static struct neighbour *nhlfe_dst_neigh_lookup(const struct dst_entry *dst, const void *daddr);
+static struct neighbour *nhlfe_dst_neigh_lookup(
+						const struct dst_entry *dst,
+						const void *daddr);
 
 static struct dst_ops nhlfe_dst_ops __read_mostly = {
 	.family	=  AF_MPLS,
@@ -157,7 +159,9 @@ static int mpls_dst_min_pmtu = 512 + 20 + 20 + 4;
 static void nhlfe_dst_update_pmtu(struct dst_entry *dst, u32 mtu)
 {
 	MPLS_ENTER;
-	if (dst_mtu(dst) > mtu && mtu >= 68 && !(dst_metric_locked(dst, RTAX_MTU))) {
+	if (dst_mtu(dst) > mtu &&
+			mtu >= 68 &&
+			!(dst_metric_locked(dst, RTAX_MTU))) {
 		if (mtu < mpls_dst_min_pmtu) {
 			u32 lock = dst_metric(dst, RTAX_LOCK);
 			mtu = mpls_dst_min_pmtu;
@@ -169,7 +173,9 @@ static void nhlfe_dst_update_pmtu(struct dst_entry *dst, u32 mtu)
 	MPLS_EXIT;
 }
 
-static struct neighbour *nhlfe_dst_neigh_lookup(const struct dst_entry *dst, const void *daddr)
+static struct neighbour *nhlfe_dst_neigh_lookup(
+			const struct dst_entry *dst,
+			const void *daddr)
 {
 	MPLS_ENTER;
 	MPLS_EXIT;
@@ -195,7 +201,7 @@ struct mpls_nhlfe *nhlfe_dst_alloc(unsigned int key)
 	MPLS_ENTER;
 
 	nhlfe = dst_alloc(&nhlfe_dst_ops, NULL, 1, 0, 0);
-	if (unlikely(!nhlfe)){
+	if (unlikely(!nhlfe)) {
 		MPLS_EXIT;
 		return NULL;
 	}
@@ -269,8 +275,8 @@ struct mpls_nhlfe *mpls_remove_nhlfe(unsigned int key)
 	spin_lock_bh(&mpls_nhlfe_lock);
 
 	nhlfe = radix_tree_delete(&mpls_nhlfe_tree, key);
-	if (!nhlfe){
-		MPLS_DEBUG("NHLFE node with key %u not found.\n",key);
+	if (!nhlfe) {
+		MPLS_DEBUG("NHLFE node with key %u not found.\n", key);
 		goto out;
 	}
 
@@ -326,14 +332,16 @@ EXPORT_SYMBOL(mpls_get_nhlfe);
 void mpls_destroy_nhlfe_instrs(struct mpls_nhlfe *nhlfe)
 {
 	MPLS_ENTER;
-	if(nhlfe->nhlfe_instr){
+	if (nhlfe->nhlfe_instr) {
 		mpls_instrs_free(nhlfe->nhlfe_instr);
 		nhlfe->nhlfe_instr = NULL;
 	}
 	MPLS_EXIT;
 }
 
-int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol, struct mpls_instr_elem *mie, int length)
+int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol,
+			struct mpls_instr_elem *mie,
+			int length)
 {
 	struct mpls_instr_req *instr_old = NULL;
 	int no_instr_old = 0;
@@ -344,10 +352,12 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol, struct mpls_instr_elem
 	BUG_ON(!nhlfe);
 
 	/* Commit the new ones */
-	if (nhlfe->nhlfe_instr){
+	if (nhlfe->nhlfe_instr) {
 		no_instr_old = mpls_no_instrs(nhlfe->nhlfe_instr);
-		instr_old = kmalloc(sizeof(*instr_old)+	no_instr_old*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
-		if (unlikely(!instr_old)){
+		instr_old = kmalloc(sizeof(*instr_old) +
+			no_instr_old * sizeof(struct mpls_instr_elem),
+			GFP_ATOMIC);
+		if (unlikely(!instr_old)) {
 			mpls_nhlfe_release(nhlfe);
 			MPLS_EXIT;
 			return -1;
@@ -357,18 +367,20 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol, struct mpls_instr_elem
 	}
 
 	/* Build temporary opcode set from mie */
-	if (!mpls_instrs_build(mie, &instr, length, MPLS_OUT, nhlfe)){
+	if (!mpls_instrs_build(mie, &instr,
+			length, MPLS_OUT, nhlfe)) {
 		/*replace with old instructions in case there were an error*/
-		if(instr_old){
-			mpls_instrs_build(instr_old->mir_instr, &instr, instr_old->mir_instr_length, MPLS_OUT, nhlfe);
-		}
+		if (instr_old)
+			mpls_instrs_build(instr_old->mir_instr, &instr,
+				instr_old->mir_instr_length,
+				MPLS_OUT, nhlfe);
+
 		MPLS_DEBUG("Returns -1\n");
 		retval = -1;
 	}
 	nhlfe->nhlfe_instr = instr;
 	mpls_nhlfe_release(nhlfe);
-	if(instr_old)
-		kfree(instr_old);
+	kfree(instr_old);
 	MPLS_EXIT;
 	return retval;
 }
@@ -386,7 +398,7 @@ int mpls_set_out_label_propagate_ttl(struct mpls_out_label_req *mol)
 	unsigned int key = mpls_label2key(0, &mol->mol_label);
 	struct mpls_nhlfe *nhlfe = mpls_get_nhlfe(key);
 	MPLS_ENTER;
-	if (!nhlfe){
+	if (!nhlfe) {
 		MPLS_EXIT;
 		return -ESRCH;
 	}
@@ -399,7 +411,8 @@ int mpls_set_out_label_propagate_ttl(struct mpls_out_label_req *mol)
 }
 
 /*
- * mpls_get_nhlfe_label - returns existing nhlfe, if there is no ilm returns NULL
+ * mpls_get_nhlfe_label - returns existing nhlfe,
+ * if there is no ilm returns NULL
  */
 struct mpls_nhlfe *mpls_get_nhlfe_label(struct mpls_out_label_req *mol)
 {
@@ -429,7 +442,7 @@ struct mpls_nhlfe *mpls_add_out_label(struct mpls_out_label_req *out)
 	BUG_ON(out->mol_label.ml_type != MPLS_LABEL_KEY);
 	/* Create a new key */
 	key = out->mol_label.u.ml_key;
-	if(!key)
+	if (!key)
 		return ERR_PTR(-ENOMEM);
 	/*
 	 * Check if the NHLFE is already in the tree.
@@ -438,7 +451,7 @@ struct mpls_nhlfe *mpls_add_out_label(struct mpls_out_label_req *out)
 	nhlfe = mpls_get_nhlfe(key);
 
 	if (unlikely(nhlfe)) {
-		MPLS_DEBUG("Node %u already exists in radix tree\n",key);
+		MPLS_DEBUG("Node %u already exists in radix tree\n", key);
 
 		/* release the refcnt held by mpls_get_nhlfe */
 		mpls_nhlfe_release(nhlfe);
@@ -478,8 +491,10 @@ static void mpls_nhlfe_del_list_in(struct mpls_nhlfe *nhlfe)
 	struct list_head *tmp = NULL;
 	struct mpls_ilm *holder;
 	MPLS_ENTER;
-	/* Iterate all ILM objects present in the list_in of the nhlfe.*/
-	list_for_each_safe(pos,tmp,nhlfe_in) {
+	/* Iterate all ILM objects present in the list_in
+	 * of the nhlfe.
+	 */
+	list_for_each_safe(pos, tmp, nhlfe_in) {
 		struct mpls_instr *mi  = NULL;
 
 		holder = list_entry(pos, struct mpls_ilm, nhlfe_entry);
@@ -502,9 +517,11 @@ static void mpls_nhlfe_del_list_in(struct mpls_nhlfe *nhlfe)
 		}
 
 		/* Make sure it is the good nhlfe */
-		if (!mi->mi_data || nhlfe->nhlfe_key != _mpls_as_nhlfe(mi->mi_data)->nhlfe_key) {
+		if (!mi->mi_data || nhlfe->nhlfe_key !=
+			_mpls_as_nhlfe(mi->mi_data)->nhlfe_key) {
 			/* Do not release the NHLFE, it was invalid */
-			MPLS_DEBUG("Invalid NHLFE  %u\n",_mpls_as_nhlfe(mi->mi_data)->nhlfe_key);
+			MPLS_DEBUG("Invalid NHLFE  %u\n",
+				_mpls_as_nhlfe(mi->mi_data)->nhlfe_key);
 			goto del;
 		}
 
@@ -556,7 +573,8 @@ int mpls_del_nhlfe(struct mpls_nhlfe *nhlfe, int seq, int pid)
 	/* From now on, drop packets */
 	nhlfe->dst.output = dst_discard;
 
-	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
+	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME,
+		MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
 
 	/* Destroy the instructions on this NHLFE, so as to no longer
 	 * hold refs to interfaces and other NHLFE's. */
@@ -590,7 +608,7 @@ int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
 
 	nhlfe = mpls_get_nhlfe(key);
 	if (unlikely(!nhlfe)) {
-		MPLS_DEBUG("Node %u was not in tree\n",key);
+		MPLS_DEBUG("Node %u was not in tree\n", key);
 		MPLS_EXIT;
 		return  -ESRCH;
 	}
@@ -617,7 +635,6 @@ int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
 
 	/* From now on, drop packets */
 	nhlfe->dst.input = nhlfe->dst.output = dst_discard;
-	
 
 	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME,
 		MPLS_CMD_DELNHLFE, nhlfe, seq, pid);
@@ -629,7 +646,7 @@ int mpls_del_out_label(struct mpls_out_label_req *out, int seq, int pid)
 	/* schedule all higher layer protocols to give up their references */
 	mpls_proto_cache_flush_all(&init_net);
 
-	WARN_ON(atomic_read(&nhlfe->dst.__refcnt)!=1);
+	WARN_ON(atomic_read(&nhlfe->dst.__refcnt) != 1);
 	/* Let the dst system know we're done with this NHLFE */
 	mpls_nhlfe_drop(nhlfe);
 

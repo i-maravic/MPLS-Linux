@@ -126,5 +126,4 @@ void mpls_proto_cache_flush_all(struct net *net)
 	rcu_read_unlock();
 	MPLS_EXIT;
 }
-
 EXPORT_SYMBOL(mpls_proto_cache_flush_all);

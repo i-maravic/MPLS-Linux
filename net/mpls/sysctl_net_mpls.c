@@ -47,7 +47,7 @@ int __init mpls_sysctl_init(void)
 {
 	MPLS_ENTER;
 	mpls_table_header = register_sysctl_paths(mpls_path, mpls_table);
-	if (!mpls_table_header){
+	if (!mpls_table_header) {
 		MPLS_EXIT
 		return -ENOMEM;
 	}
@@ -56,7 +56,7 @@ int __init mpls_sysctl_init(void)
 }
 
 void mpls_sysctl_exit(void)
-{	
+{
 	MPLS_ENTER;
 	unregister_sysctl_table(mpls_table_header);
 	MPLS_EXIT;

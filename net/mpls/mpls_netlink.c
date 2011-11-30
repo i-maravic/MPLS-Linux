@@ -65,13 +65,14 @@ static int mpls_fill_ilm(struct sk_buff *skb, struct mpls_ilm *ilm,
 	MPLS_ENTER;
 
 	hdr = genlmsg_put(skb, pid, seq, &genl_mpls, flag, event);
-	if (IS_ERR(hdr)){
+	if (IS_ERR(hdr)) {
 		MPLS_EXIT;
 		return PTR_ERR(hdr);
 	}
 
 	no_instr = mpls_no_instrs(ilm->ilm_instr);
-	instr = kmalloc(sizeof(*instr)+	no_instr*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
+	instr = kmalloc(sizeof(*instr) +
+		no_instr * sizeof(struct mpls_instr_elem), GFP_ATOMIC);
 	if (unlikely(!instr))
 		goto nla_put_failure;
 
@@ -82,7 +83,9 @@ static int mpls_fill_ilm(struct sk_buff *skb, struct mpls_ilm *ilm,
 	mil.mil_owner = ilm->ilm_owner;
 
 	NLA_PUT(skb, MPLS_ATTR_ILM, sizeof(mil), &mil);
-	NLA_PUT(skb, MPLS_ATTR_INSTR, sizeof(*instr)+instr->mir_instr_length*sizeof(struct mpls_instr_elem), instr);
+	NLA_PUT(skb, MPLS_ATTR_INSTR, sizeof(*instr) +
+		instr->mir_instr_length *
+		sizeof(struct mpls_instr_elem), instr);
 
 	kfree(instr);
 
@@ -90,24 +93,26 @@ static int mpls_fill_ilm(struct sk_buff *skb, struct mpls_ilm *ilm,
 	return genlmsg_end(skb, hdr);
 
 nla_put_failure:
-	if (instr)
-		kfree(instr);
+	kfree(instr);
 	genlmsg_cancel(skb, hdr);
 	MPLS_DEBUG("Exit: -1\n");
 	MPLS_EXIT;
 	return -ENOMEM;
 }
 
-int mpls_ilm_event(char* grp_name, int event, struct mpls_ilm *ilm,int seq,int pid)
+int mpls_ilm_event(char *grp_name, int event,
+	struct mpls_ilm *ilm, int seq, int pid)
 {
 	struct sk_buff *skb;
 	unsigned int group;
 	int err;
 	MPLS_ENTER;
 
-	if(strncmp(genl_mpls_ilm_mcast_grp.name,grp_name,strlen(grp_name))==0){
+	if (strncmp(genl_mpls_ilm_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_ilm_mcast_grp.id;
-	} else if (strncmp(genl_mpls_get_mcast_grp.name,grp_name,strlen(grp_name))==0) {
+	} else if (strncmp(genl_mpls_get_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_get_mcast_grp.id;
 	} else {
 		MPLS_EXIT;
@@ -128,7 +133,7 @@ int mpls_ilm_event(char* grp_name, int event, struct mpls_ilm *ilm,int seq,int p
 		MPLS_EXIT;
 		return err;
 	}
-	/*err =*/ genlmsg_multicast(skb, 0, group, GFP_KERNEL);
+	/*err =*/genlmsg_multicast(skb, 0, group, GFP_KERNEL);
 	err = 0;
 	MPLS_EXIT;
 	return err;
@@ -138,7 +143,10 @@ int mpls_ilm_event(char* grp_name, int event, struct mpls_ilm *ilm,int seq,int p
  * mpls_dump_ilm_event - Dumps ilm with all informations
  * @out: request
  **/
-static int mpls_dump_ilm_event(const struct mpls_in_label_req *in,int seq, int pid){
+static int mpls_dump_ilm_event(
+	const struct mpls_in_label_req *in,
+	int seq, int pid)
+{
 	struct mpls_ilm *ilm     = NULL; /* New ILM to insert */
 	struct mpls_label *ml    = NULL; /* Requested Label */
 	unsigned int key         = 0;    /* Key to use */
@@ -147,12 +155,12 @@ static int mpls_dump_ilm_event(const struct mpls_in_label_req *in,int seq, int p
 	ml = (struct mpls_label *)&in->mil_label;
 
 	/* Obtain key */
-	key = mpls_label2key(/* labelspace*/ ml->ml_labelspace, ml);
+	key = mpls_label2key(ml->ml_labelspace, ml);
 
 	ilm = mpls_get_ilm(key);
 
 	if (unlikely(!ilm)) {
-		MPLS_DEBUG("Node %u was not in tree\n",key);
+		MPLS_DEBUG("Node %u was not in tree\n", key);
 		MPLS_EXIT;
 		return  -ESRCH;
 	}
@@ -160,13 +168,15 @@ static int mpls_dump_ilm_event(const struct mpls_in_label_req *in,int seq, int p
 	/* we have hold a refcnt to the ilm across mpls_ilm_event()
 	 * to make sure it can't disappear
 	 */
-	retval = mpls_ilm_event(MPLS_GRP_ILM_NAME, MPLS_CMD_NEWILM, ilm,seq,pid);
+	retval = mpls_ilm_event(MPLS_GRP_ILM_NAME,
+		MPLS_CMD_NEWILM, ilm, seq, pid);
 	mpls_ilm_release(ilm);
 	MPLS_EXIT;
 	return retval;
 }
 
-static int genl_mpls_ilm_new(struct sk_buff *skb, struct genl_info *info)
+static int genl_mpls_ilm_new(struct sk_buff *skb,
+	struct genl_info *info)
 {
 	struct mpls_in_label_req *mil;
 	struct mpls_instr_req *instr = NULL;
@@ -175,36 +185,40 @@ static int genl_mpls_ilm_new(struct sk_buff *skb, struct genl_info *info)
 
 	MPLS_ENTER;
 
-	if (!info->attrs[MPLS_ATTR_ILM]){
+	if (!info->attrs[MPLS_ATTR_ILM]) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 
-	if (info->attrs[MPLS_ATTR_INSTR]) {
+	if (info->attrs[MPLS_ATTR_INSTR])
 		instr = nla_data(info->attrs[MPLS_ATTR_INSTR]);
-	}
 
 	mil = nla_data(info->attrs[MPLS_ATTR_ILM]);
 
-	if (info->nlhdr->nlmsg_flags & NLM_F_CREATE){
+	if (info->nlhdr->nlmsg_flags & NLM_F_CREATE) {
 		ilm = mpls_add_in_label(mil);
-		if (IS_ERR(ilm)){
+		if (IS_ERR(ilm)) {
 			MPLS_EXIT;
 			return PTR_ERR(ilm);
 		}
 	}
 
-	if (instr && mil->mil_change_flag & MPLS_CHANGE_INSTR)
-		retval = mpls_ilm_set_instrs(mil, instr->mir_instr, instr->mir_instr_length);
+	if (instr && mil->mil_change_flag&MPLS_CHANGE_INSTR)
+		retval = mpls_ilm_set_instrs(mil, instr->mir_instr,
+			instr->mir_instr_length);
 		/* JLEU: should revert to old instr on failure */
 
-	if(!retval){
-		mpls_dump_ilm_event(mil,info->snd_seq, info->snd_pid);
-	} else {
+	if (!retval)
+		mpls_dump_ilm_event(mil, info->snd_seq, info->snd_pid);
+	else {
 		/*IMAR:
-		If user can't initialy set ilm with desired instructions or protocol,
-		than the ilm won't exist. But if the user wants to change ilm,
-		and instructions are bad, the ilm entry won't be deleted! */
+		 *	If user can't initialy set ilm with
+		 *	desired instructions or protocol,
+		 *	than the ilm won't exist.
+		 *	But if the user wants to change ilm,
+		 *	and instructions are bad, the ilm entry
+		 *	won't be deleted!
+		 */
 		if (info->nlhdr->nlmsg_flags & NLM_F_CREATE)
 			mpls_del_in_label(mil, 0, 0);
 	}
@@ -220,7 +234,7 @@ static int genl_mpls_ilm_del(struct sk_buff *skb, struct genl_info *info)
 
 	MPLS_ENTER;
 
-	if (!info->attrs[MPLS_ATTR_ILM]){
+	if (!info->attrs[MPLS_ATTR_ILM]) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
@@ -253,8 +267,10 @@ static int genl_mpls_ilm_get(struct sk_buff *skb, struct genl_info *info)
 		retval = -ESRCH;
 		goto err;
 	} else {
-		retval = mpls_ilm_event(MPLS_GRP_GET_NAME, MPLS_CMD_NEWILM, ilm,info->snd_seq,info->snd_pid);
-		mpls_ilm_release (ilm);
+		retval = mpls_ilm_event(MPLS_GRP_GET_NAME,
+			MPLS_CMD_NEWILM, ilm,
+			info->snd_seq, info->snd_pid);
+		mpls_ilm_release(ilm);
 	}
 err:
 	MPLS_DEBUG("Exit: %d\n", retval);
@@ -292,23 +308,26 @@ static int genl_mpls_ilm_dump(struct sk_buff *skb, struct netlink_callback *cb)
 
 /* NHLFE netlink support */
 
-static int mpls_fill_nhlfe(struct sk_buff *skb, struct mpls_nhlfe *nhlfe,	u32 pid, u32 seq, int flag, int event)
+static int mpls_fill_nhlfe(struct sk_buff *skb,
+	struct mpls_nhlfe *nhlfe, u32 pid, u32 seq,
+	int flag, int event)
 {
 	struct mpls_out_label_req mol;
 	struct mpls_instr_req *instr;
-	int no_instr = 0; //number of instructions
+	int no_instr = 0; /*number of instructions*/
 	void *hdr;
 
 	MPLS_ENTER;
 
 	hdr = genlmsg_put(skb, pid, seq, &genl_mpls, flag, event);
-	if (IS_ERR(hdr)){
+	if (IS_ERR(hdr)) {
 		MPLS_EXIT;
 		return PTR_ERR(hdr);
 	}
 
 	no_instr = mpls_no_instrs(nhlfe->nhlfe_instr);
-	instr = kmalloc(sizeof(*instr)+	no_instr*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
+	instr = kmalloc(sizeof(*instr) +
+		no_instr*sizeof(struct mpls_instr_elem), GFP_ATOMIC);
 	if (unlikely(!instr))
 		goto nla_put_failure;
 
@@ -322,7 +341,9 @@ static int mpls_fill_nhlfe(struct sk_buff *skb, struct mpls_nhlfe *nhlfe,	u32 pi
 	mol.mol_owner = nhlfe->nhlfe_owner;
 
 	NLA_PUT(skb, MPLS_ATTR_NHLFE, sizeof(mol), &mol);
-	NLA_PUT(skb, MPLS_ATTR_INSTR, sizeof(*instr)+instr->mir_instr_length*sizeof(struct mpls_instr_elem), instr);
+	NLA_PUT(skb, MPLS_ATTR_INSTR,
+		sizeof(*instr) + instr->mir_instr_length *
+		sizeof(struct mpls_instr_elem), instr);
 
 	kfree(instr);
 
@@ -330,24 +351,26 @@ static int mpls_fill_nhlfe(struct sk_buff *skb, struct mpls_nhlfe *nhlfe,	u32 pi
 	return genlmsg_end(skb, hdr);
 
 nla_put_failure:
-	if (instr)
-		kfree(instr);
+	kfree(instr);
 	genlmsg_cancel(skb, hdr);
 	MPLS_DEBUG("Exit: -1\n");
 	MPLS_EXIT;
 	return -ENOMEM;
 }
 
-int mpls_nhlfe_event(char* grp_name, int event, struct mpls_nhlfe *nhlfe, int seq, int pid)
+int mpls_nhlfe_event(char *grp_name, int event,
+	struct mpls_nhlfe *nhlfe, int seq, int pid)
 {
 	struct sk_buff *skb;
 	unsigned int group;
 	int err;
 
 	MPLS_ENTER;
-	if(strncmp(genl_mpls_nhlfe_mcast_grp.name,grp_name,strlen(grp_name))==0){
+	if (strncmp(genl_mpls_nhlfe_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_nhlfe_mcast_grp.id;
-	} else if (strncmp(genl_mpls_get_mcast_grp.name,grp_name,strlen(grp_name))==0) {
+	} else if (strncmp(genl_mpls_get_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_get_mcast_grp.id;
 	} else {
 		MPLS_EXIT;
@@ -355,7 +378,7 @@ int mpls_nhlfe_event(char* grp_name, int event, struct mpls_nhlfe *nhlfe, int se
 	}
 
 	skb = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
-	if (skb == NULL) {
+	if (!skb) {
 		MPLS_DEBUG("Exit: EINVAL\n");
 		MPLS_EXIT;
 		return -ENOMEM;
@@ -378,16 +401,18 @@ int mpls_nhlfe_event(char* grp_name, int event, struct mpls_nhlfe *nhlfe, int se
  * mpls_dump_nhlfe_event - Dumps nhlfe with all informations
  * @out: request
  **/
-static int mpls_dump_nhlfe_event(struct mpls_out_label_req *out, int seq, int pid){
+static int mpls_dump_nhlfe_event(struct mpls_out_label_req *out,
+		int seq, int pid)
+{
 	struct mpls_nhlfe *nhlfe = NULL;
 	unsigned int key;
 	int retval = 0;
 
-	key = mpls_label2key(0,&out->mol_label);
+	key = mpls_label2key(0, &out->mol_label);
 	nhlfe = mpls_get_nhlfe(key);
 
-	if (unlikely(!nhlfe)){
-		MPLS_DEBUG("Node %u was not in tree\n",key);
+	if (unlikely(!nhlfe)) {
+		MPLS_DEBUG("Node %u was not in tree\n", key);
 		MPLS_EXIT;
 		return -ESRCH;
 	}
@@ -395,7 +420,8 @@ static int mpls_dump_nhlfe_event(struct mpls_out_label_req *out, int seq, int pi
 	/* we need to hold a ref to the nhlfe while calling
 	 * mpls_nhlfe_event so it can't disappear
 	 */
-	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME, MPLS_CMD_NEWNHLFE, nhlfe, seq, pid);
+	retval = mpls_nhlfe_event(MPLS_GRP_NHLFE_NAME,
+		MPLS_CMD_NEWNHLFE, nhlfe, seq, pid);
 	mpls_nhlfe_release(nhlfe);
 	return retval;
 }
@@ -409,32 +435,34 @@ static int genl_mpls_nhlfe_new(struct sk_buff *skb, struct genl_info *info)
 
 	MPLS_ENTER;
 
-	if (!info->attrs[MPLS_ATTR_NHLFE] || (!info->attrs[MPLS_ATTR_INSTR] && info->nlhdr->nlmsg_flags&NLM_F_CREATE)){
+	if (!info->attrs[MPLS_ATTR_NHLFE] ||
+		(!info->attrs[MPLS_ATTR_INSTR] &&
+		info->nlhdr->nlmsg_flags&NLM_F_CREATE)){
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 
-	if (info->attrs[MPLS_ATTR_INSTR]) {
+	if (info->attrs[MPLS_ATTR_INSTR])
 		instr = nla_data(info->attrs[MPLS_ATTR_INSTR]);
-	}
 
 	mol = nla_data(info->attrs[MPLS_ATTR_NHLFE]);
-	
-	if (mol->mol_label.ml_type != MPLS_LABEL_KEY){
+
+	if (mol->mol_label.ml_type != MPLS_LABEL_KEY) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 
 	if (info->nlhdr->nlmsg_flags&NLM_F_CREATE) {
 		nhlfe = mpls_add_out_label(mol);
-		if (IS_ERR(nhlfe)){
+		if (IS_ERR(nhlfe)) {
 			MPLS_EXIT;
 			return PTR_ERR(nhlfe);
 		}
 	}
 
 	if (instr && mol->mol_change_flag & MPLS_CHANGE_INSTR) {
-		retval = mpls_nhlfe_set_instrs(mol, instr->mir_instr, instr->mir_instr_length);
+		retval = mpls_nhlfe_set_instrs(mol,
+			instr->mir_instr, instr->mir_instr_length);
 		/* JLEU: should revert to old instr on failure */
 	}
 
@@ -444,14 +472,20 @@ static int genl_mpls_nhlfe_new(struct sk_buff *skb, struct genl_info *info)
 	if ((!retval) && mol->mol_change_flag & MPLS_CHANGE_PROP_TTL)
 		retval = mpls_set_out_label_propagate_ttl(mol);
 
-	if((!retval)){
-		mpls_dump_nhlfe_event(mol,info->snd_seq, info->snd_pid);
+	if (!retval) {
+		mpls_dump_nhlfe_event(mol,
+			info->snd_seq, info->snd_pid);
 	} else {
 		/*IMAR:
-		If user can't initialy set nhlfe with desired instructions or mtu,
-		than the nhlfe entry won't exist. But if the user wants to change nhlfe,
-		and instructions, or mtu, are bad, the nhlfe entry won't be deleted! */
-		if(info->nlhdr->nlmsg_flags&NLM_F_CREATE)
+		 *	If user can't initialy set nhlfe
+		 *	with desired instructions or mtu,
+		 *	than the nhlfe entry won't exist.
+		 *
+		 *	But if the user wants to change nhlfe,
+		 *	and instructions, or mtu, are bad,
+		 *	the nhlfe entry won't be deleted!
+		*/
+		if (info->nlhdr->nlmsg_flags&NLM_F_CREATE)
 			mpls_del_out_label(mol, 0, 0);
 	}
 
@@ -466,7 +500,7 @@ static int genl_mpls_nhlfe_del(struct sk_buff *skb, struct genl_info *info)
 	int retval = -EINVAL;
 
 	MPLS_ENTER;
-	if (!info->attrs[MPLS_ATTR_NHLFE]){
+	if (!info->attrs[MPLS_ATTR_NHLFE]) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
@@ -498,8 +532,10 @@ static int genl_mpls_nhlfe_get(struct sk_buff *skb, struct genl_info *info)
 	if (!nhlfe) {
 		retval = -ESRCH;
 	} else {
-		retval = mpls_nhlfe_event(MPLS_GRP_GET_NAME, MPLS_CMD_NEWNHLFE, nhlfe, info->snd_seq, info->snd_pid);
-		mpls_nhlfe_release (nhlfe);
+		retval = mpls_nhlfe_event(MPLS_GRP_GET_NAME,
+			MPLS_CMD_NEWNHLFE, nhlfe,
+			info->snd_seq, info->snd_pid);
+		mpls_nhlfe_release(nhlfe);
 	}
 err:
 	MPLS_DEBUG("Exit: %d\n", retval);
@@ -541,14 +577,15 @@ static int genl_mpls_nhlfe_dump(struct sk_buff *skb,
 
 /* XC netlink support */
 
-static int mpls_fill_xc(struct sk_buff *skb, struct mpls_ilm *ilm,
-		struct mpls_nhlfe *nhlfe, u32 pid, u32 seq, int flag, int event)
+static int mpls_fill_xc(struct sk_buff *skb,
+	struct mpls_ilm *ilm, struct mpls_nhlfe *nhlfe,
+	u32 pid, u32 seq, int flag, int event)
 {
 	struct mpls_xconnect_req xc;
 	void *hdr;
 
 	hdr = genlmsg_put(skb, pid, seq, &genl_mpls, flag, event);
-	if (IS_ERR(hdr)){
+	if (IS_ERR(hdr)) {
 		MPLS_EXIT;
 		return PTR_ERR(hdr);
 	}
@@ -571,8 +608,9 @@ nla_put_failure:
 	return -ENOMEM;
 }
 
-int mpls_xc_event(char* grp_name, int event, struct mpls_ilm *ilm,
-		struct mpls_nhlfe *nhlfe,int seq, int pid)
+int mpls_xc_event(char *grp_name, int event,
+	struct mpls_ilm *ilm, struct mpls_nhlfe *nhlfe,
+	int seq, int pid)
 {
 	struct sk_buff *skb;
 	int err;
@@ -580,9 +618,11 @@ int mpls_xc_event(char* grp_name, int event, struct mpls_ilm *ilm,
 
 	MPLS_ENTER;
 
-	if(strncmp(genl_mpls_xc_mcast_grp.name,grp_name,strlen(grp_name))==0){
+	if (strncmp(genl_mpls_xc_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_xc_mcast_grp.id;
-	} else if (strncmp(genl_mpls_get_mcast_grp.name,grp_name,strlen(grp_name))==0) {
+	} else if (strncmp(genl_mpls_get_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_get_mcast_grp.id;
 	} else {
 		MPLS_EXIT;
@@ -590,7 +630,7 @@ int mpls_xc_event(char* grp_name, int event, struct mpls_ilm *ilm,
 	}
 
 	skb = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
-	if (skb == NULL) {
+	if (!skb) {
 		MPLS_DEBUG("Exit: EINVAL\n");
 		MPLS_EXIT;
 		return -ENOMEM;
@@ -604,7 +644,7 @@ int mpls_xc_event(char* grp_name, int event, struct mpls_ilm *ilm,
 		return err;
 	}
 	/*err = */genlmsg_multicast(skb, 0, group, GFP_KERNEL);
-	err=0;
+	err = 0;
 	MPLS_EXIT;
 	return err;
 }
@@ -616,14 +656,15 @@ static int genl_mpls_xc_new(struct sk_buff *skb, struct genl_info *info)
 
 	MPLS_ENTER;
 
-	if (!info->attrs[MPLS_ATTR_XC]){
+	if (!info->attrs[MPLS_ATTR_XC]) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 
 	xc = nla_data(info->attrs[MPLS_ATTR_XC]);
 
-	retval = mpls_attach_in2out(xc,info->snd_seq,info->snd_pid);
+	retval = mpls_attach_in2out(xc,
+		info->snd_seq, info->snd_pid);
 	MPLS_DEBUG("Exit: %d\n", retval);
 	MPLS_EXIT;
 	return retval;
@@ -635,13 +676,14 @@ static int genl_mpls_xc_del(struct sk_buff *skb, struct genl_info *info)
 	int retval = -EINVAL;
 
 	MPLS_ENTER;
-	if (!info->attrs[MPLS_ATTR_XC]){
+	if (!info->attrs[MPLS_ATTR_XC]) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 
 	xc = nla_data(info->attrs[MPLS_ATTR_XC]);
-	retval = mpls_detach_in2out(xc,info->snd_seq,info->snd_pid);
+	retval = mpls_detach_in2out(xc,
+		info->snd_seq, info->snd_pid);
 	MPLS_DEBUG("Exit: %d\n", retval);
 	MPLS_EXIT;
 	return retval;
@@ -678,9 +720,11 @@ static int genl_mpls_xc_get(struct sk_buff *skb, struct genl_info *info)
 		} else {
 			nhlfe = mi->mi_data;
 
-			retval = mpls_xc_event(MPLS_GRP_GET_NAME,MPLS_CMD_NEWXC,ilm,nhlfe,info->snd_seq,info->snd_pid);
+			retval = mpls_xc_event(MPLS_GRP_GET_NAME,
+			MPLS_CMD_NEWXC, ilm, nhlfe,
+			info->snd_seq, info->snd_pid);
 		}
-		mpls_ilm_release (ilm);
+		mpls_ilm_release(ilm);
 	}
 err:
 	MPLS_DEBUG("Exit: %d\n", retval);
@@ -714,10 +758,10 @@ static int genl_mpls_xc_dump(struct sk_buff *skb, struct netlink_callback *cb)
 			nhlfe = mi->mi_data;
 
 			if (mpls_fill_xc(skb, ilm, nhlfe,
-			NETLINK_CB(cb->skb).pid, cb->nlh->nlmsg_seq,
-			NLM_F_MULTI, MPLS_CMD_NEWXC) < 0) {
-			break;
-			}
+					NETLINK_CB(cb->skb).pid,
+					cb->nlh->nlmsg_seq,
+					NLM_F_MULTI, MPLS_CMD_NEWXC) < 0)
+				break;
 		}
 		entry_count++;
 	}
@@ -732,24 +776,25 @@ static int genl_mpls_xc_dump(struct sk_buff *skb, struct netlink_callback *cb)
 
 /* LABELSPACE netlink support */
 
-static int mpls_fill_labelspace(struct sk_buff *skb, struct net_device *dev, u32 pid, u32 seq, int flag, int event)
+static int mpls_fill_labelspace(struct sk_buff *skb,
+	struct net_device *dev, u32 pid,
+	u32 seq, int flag, int event)
 {
 	struct mpls_labelspace_req ls;
 	struct mpls_interface *mif = dev->mpls_ptr;
 	void *hdr;
 	MPLS_ENTER;
 	hdr = genlmsg_put(skb, pid, seq, &genl_mpls, flag, event);
-	if (IS_ERR(hdr)){
+	if (IS_ERR(hdr)) {
 		MPLS_EXIT;
 		return PTR_ERR(hdr);
 	}
 
 	ls.mls_ifindex = dev->ifindex;
-	if (mif) {
+	if (mif)
 		ls.mls_labelspace = mif->labelspace;
-	} else {
+	else
 		ls.mls_labelspace = -1;
-	}
 
 	NLA_PUT(skb, MPLS_ATTR_LABELSPACE, sizeof(ls), &ls);
 
@@ -764,16 +809,20 @@ nla_put_failure:
 	return -ENOMEM;
 }
 
-int mpls_labelspace_event(char* grp_name, int event, struct net_device *dev, int seq, int pid)
+int mpls_labelspace_event(char *grp_name,
+	int event, struct net_device *dev,
+	int seq, int pid)
 {
 	struct sk_buff *skb;
 	unsigned int group;
 	int err;
 
 	MPLS_ENTER;
-	if(strncmp(genl_mpls_lspace_mcast_grp.name,grp_name,strlen(grp_name))==0){
+	if (strncmp(genl_mpls_lspace_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_lspace_mcast_grp.id;
-	} else if (strncmp(genl_mpls_get_mcast_grp.name,grp_name,strlen(grp_name))==0) {
+	} else if (strncmp(genl_mpls_get_mcast_grp.name,
+		grp_name, strlen(grp_name)) == 0) {
 		group = genl_mpls_get_mcast_grp.id;
 	} else {
 		MPLS_EXIT;
@@ -805,12 +854,13 @@ static int genl_mpls_labelspace_set(struct sk_buff *skb, struct genl_info *info)
 	int retval = -EINVAL;
 
 	MPLS_ENTER;
-	if (!info->attrs[MPLS_ATTR_LABELSPACE]){
+	if (!info->attrs[MPLS_ATTR_LABELSPACE]) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}
 	ls = nla_data(info->attrs[MPLS_ATTR_LABELSPACE]);
-	retval = mpls_set_labelspace(ls,info->snd_seq,info->snd_pid);
+	retval = mpls_set_labelspace(ls,
+		info->snd_seq, info->snd_pid);
 	MPLS_DEBUG("Exit: %d\n", retval);
 	MPLS_EXIT;
 	return retval;
@@ -831,8 +881,10 @@ static int genl_mpls_labelspace_get(struct sk_buff *skb, struct genl_info *info)
 	if (!dev) {
 		retval = -ESRCH;
 	} else {
-		retval = mpls_labelspace_event(MPLS_GRP_GET_NAME, MPLS_CMD_SETLABELSPACE,dev,info->snd_seq,info->snd_pid);
-		dev_put (dev);
+		retval = mpls_labelspace_event(MPLS_GRP_GET_NAME,
+			MPLS_CMD_SETLABELSPACE, dev, info->snd_seq,
+			info->snd_pid);
+		dev_put(dev);
 	}
 err:
 	MPLS_DEBUG("Exit: %d\n", retval);
@@ -857,8 +909,8 @@ static int genl_mpls_labelspace_dump(struct sk_buff *skb,
 		MPLS_DEBUG("Dump: entry %d\n", entry_count);
 		if (entry_count >= entries_to_skip) {
 			if (mpls_fill_labelspace(skb, dev,
-					NETLINK_CB(cb->skb).pid, cb->nlh->nlmsg_seq,
-					NLM_F_MULTI, MPLS_CMD_SETLABELSPACE) < 0) {
+				NETLINK_CB(cb->skb).pid, cb->nlh->nlmsg_seq,
+				NLM_F_MULTI, MPLS_CMD_SETLABELSPACE) < 0) {
 				break;
 			}
 		}
