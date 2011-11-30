@@ -254,13 +254,13 @@ struct mpls_prot_driver *mpls_proto_find_by_family(unsigned short);
 struct mpls_prot_driver *mpls_proto_find_by_ethertype(unsigned short);
 void                     mpls_proto_cache_flush_all (struct net *);
 
-static void inline mpls_proto_release(struct mpls_prot_driver **prot)
+static void inline mpls_proto_release(struct mpls_prot_driver *prot)
 {
-	if (*prot == NULL)
+	if (!prot)
 		return;
-	atomic_dec(&(*prot)->__refcnt);
-	module_put((*prot)->owner);
-	*prot = NULL;
+	atomic_dec(&prot->__refcnt);
+	module_put(prot->owner);
+	prot = NULL;
 }
 
 /****************************************************************************
