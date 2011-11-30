@@ -164,7 +164,7 @@ mpls_input_fwd:
 	prot = cb->prot = nhlfe->nhlfe_proto;
 
 	if (cb->ttl <= 1) {
-		printk(KERN_DEBUG "TTL exceeded\n");
+		MPLS_DEBUG("TTL exceeded\n");
 
 		retval = prot->ttl_expired(&skb);
 

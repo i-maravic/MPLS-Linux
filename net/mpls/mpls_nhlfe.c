@@ -87,7 +87,7 @@ static unsigned int nhlfe_dst_default_advmss(const struct dst_entry *dst)
 {
 	unsigned int advmss = dst_metric_raw(dst, RTAX_ADVMSS);
 	MPLS_ENTER;
-	printk(KERN_DEBUG "NHLFE default advmss %u\n", advmss);
+	MPLS_DEBUG("NHLFE default advmss %u\n", advmss);
 	MPLS_EXIT;
 	return advmss;
 }
@@ -101,7 +101,7 @@ static unsigned int nhlfe_dst_mtu(const struct dst_entry *dst)
 	BUG_ON(!dst->dev);
 	mtu = dst->dev->mtu;
 out:
-	printk(KERN_DEBUG "NHLFE default mtu %u\n", mtu);
+	MPLS_DEBUG("NHLFE default mtu %u\n", mtu);
 	MPLS_EXIT;
 	return mtu;
 }
@@ -145,7 +145,6 @@ static void nhlfe_dst_link_failure(struct sk_buff *skb)
 {
 	struct mpls_nhlfe *nhlfe;
 	MPLS_ENTER;
-	printk(KERN_DEBUG "%s:\n", __func__);
 	/* icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0);*/
 	nhlfe = (struct mpls_nhlfe *)skb_dst(skb);
 	if (nhlfe)
