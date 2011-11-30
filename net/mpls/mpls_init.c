@@ -29,7 +29,13 @@
 /**
  * variables controled via sysctl
  **/
-int sysctl_mpls_debug = CONFIG_MPLS_DEBUG;
+#ifdef CONFIG_MPLS_DEBUG
+#define MPLS_DEBUG_SYS 1
+#else
+#define MPLS_DEBUG_SYS 0
+#endif
+
+int sysctl_mpls_debug = MPLS_DEBUG_SYS;
 EXPORT_SYMBOL(sysctl_mpls_debug);
 
 int sysctl_mpls_default_ttl = 255;
