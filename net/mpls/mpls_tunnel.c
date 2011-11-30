@@ -244,7 +244,7 @@ static int mpls_tunnel_alloc(struct mpls_tunnel_req *mtr)
 
 	MPLS_ENTER;
 	retval = -ESRCH;
-	nhlfe = mpls_get_nhlfe(mtr->mt_nhlfe_key;
+	nhlfe = mpls_get_nhlfe(mtr->mt_nhlfe_key);
 	if (mtr->mt_nhlfe_key && !nhlfe)
 		goto error;
 
