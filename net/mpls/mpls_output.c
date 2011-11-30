@@ -72,7 +72,7 @@ static inline int mpls_send(struct sk_buff *skb)
 	rcu_read_unlock();
 
 	if (net_ratelimit())
-		printk(KERN_DEBUG "mpls_send: No header cache and no neighbour!\n");
+		MPLS_DEBUG("No header cache and no neighbour!\n");
 
 	kfree_skb(skb);
 	MPLS_EXIT;
@@ -130,13 +130,13 @@ static inline int mpls_finish_output(
 					goto send;
 				break;
 			case MPLS_RESULT_DROP:
-				printk(KERN_DEBUG "FWD F'ed up instruction!\n");
 				goto out_drop;
 			case MPLS_RESULT_FWD:
 			case MPLS_RESULT_RECURSE:
 			case MPLS_RESULT_DLV:
 				/* Invalid on OUTPUT */
 				WARN_ON_ONCE(1);
+				goto out_drop;
 			}
 		}
 	}
@@ -145,7 +145,7 @@ static inline int mpls_finish_output(
 send:
 	if (skb->len > dev->mtu) {
 		int mtu = dst_mtu(&nhlfe->dst);
-		printk(KERN_DEBUG "packet size %d"
+		MPLS_DEBUG("packet size %d"
 			" exceeded device MTU %d (%d)\n",
 			skb->len, dev->mtu, mtu);
 		ret = nhlfe->nhlfe_proto->mtu_exceeded(&skb, mtu);

@@ -47,7 +47,7 @@ Debugging macros
 #define MPLS_DEBUG(f, a...) \
 { \
 	if (sysctl_mpls_debug) {\
-		printk(KERN_INFO "MPLS DEBUG %s:%d:%s: ", \
+		printk(KERN_DEBUG "MPLS DEBUG %s:%d:%s: ", \
 			__FILE__, __LINE__, __func__); \
 		printk(f, ##a); \
 	} \
