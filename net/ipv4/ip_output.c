@@ -188,7 +188,7 @@ static inline int ip_finish_output2(struct sk_buff *skb)
 		IP_UPD_PO_STATS(dev_net(dev), IPSTATS_MIB_OUTMCAST, skb->len);
 	} else if (rt->rt_type == RTN_BROADCAST)
 		IP_UPD_PO_STATS(dev_net(dev), IPSTATS_MIB_OUTBCAST, skb->len);
-#ifdef CONFIG_IP_MPLS
+#if IS_ENABLED(CONFIG_IP_MPLS)
 	if (dst->child) {
 		skb_dst_set(skb, skb_dst_pop(skb));
 		return dst_output(skb);

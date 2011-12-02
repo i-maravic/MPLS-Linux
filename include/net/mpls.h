@@ -40,6 +40,7 @@
  */
 extern int sysctl_mpls_debug;
 extern int sysctl_mpls_default_ttl;
+extern struct shim mpls_uc_shim;
 
 /*
 Debugging macros
@@ -651,6 +652,14 @@ void  mpls_proc_exit(struct net *net);
 
 int  mpls_netlink_init(void);
 void mpls_netlink_exit(void);
+
+/****************************************************************************
+ * net/mpls/mpls_shim.c
+ *
+****************************************************************************/
+
+void mpls_shim_init(void);
+void mpls_shim_exit(void);
 
 /****************************************************************************
  * Virtual Intefaces (Tunnel) Management

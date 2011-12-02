@@ -45,7 +45,7 @@ struct fib_config {
 	u32			fc_flow;
 	u32			fc_nlflags;
 	struct nl_info		fc_nlinfo;
-#ifdef CONFIG_IP_MPLS
+#if IS_ENABLED(CONFIG_IP_MPLS)
 	struct rtshim 		*fc_shim;
 #endif
  };
@@ -69,7 +69,7 @@ struct fib_nh {
 	__be32			nh_gw;
 	__be32			nh_saddr;
 	int			nh_saddr_genid;
-#ifdef CONFIG_IP_MPLS
+#if IS_ENABLED(CONFIG_IP_MPLS)
 	struct shim_blk	*nh_shim;
 #endif
 };
@@ -163,7 +163,7 @@ extern __be32 fib_info_update_nh_saddr(struct net *net, struct fib_nh *nh);
 #define FIB_RES_DEV(res)		(FIB_RES_NH(res).nh_dev)
 #define FIB_RES_OIF(res)		(FIB_RES_NH(res).nh_oif)
 
-#ifdef CONFIG_IP_MPLS
+#if IS_ENABLED(CONFIG_IP_MPLS)
 #define FIB_RES_SHIM(res)    	(FIB_RES_NH(res).nh_shim)
 #endif
 
