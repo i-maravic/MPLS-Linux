@@ -74,17 +74,12 @@ inline int mpls_set_nexthop(struct shim_blk *sblk, struct dst_entry *dst)
 }
 EXPORT_SYMBOL(mpls_set_nexthop);
 
-/**
- *	mpls_uc_shim - "SPECIAL" next hop Management for MPLS UC traffic.
- *	@name: name of the struct.
- *	@build: Callback used to build
- *
- *	e.g. for a MPLS enabled iproute2:
- *	ip route add a.b.c.d/n via x.y.z.w shim mpls 0x2
- *	The key (0x2) is the "data" for NHLFE lookup.
- **/
-struct shim mpls_uc_shim = {
-	.name = "mpls",
-	.build = mpls_set_nexthop,
-};
-EXPORT_SYMBOL(mpls_uc_shim);
+void __init mpls_shim_init(void)
+{
+	mpls_uc_shim.build = mpls_set_nexthop;
+}
+
+void mpls_shim_exit(void)
+{
+	mpls_uc_shim.build = NULL;
+}

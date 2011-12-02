@@ -132,7 +132,7 @@ int eth_rebuild_header(struct sk_buff *skb)
 	case htons(ETH_P_IP):
 		return arp_find(eth->h_dest, skb);
 #endif
-#ifdef CONFIG_MPLS
+#if IS_ENABLED(CONFIG_MPLS)
 	case htons(ETH_P_MPLS_UC):
 		return arp_find(eth->h_dest, skb);
 #endif

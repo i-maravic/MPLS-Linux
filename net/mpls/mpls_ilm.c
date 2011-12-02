@@ -739,6 +739,7 @@ int mpls_add_reserved_label(int label, struct mpls_ilm *ilm)
 	MPLS_EXIT;
 	return 0;
 }
+EXPORT_SYMBOL(mpls_add_reserved_label);
 
 /**
  *	mpls_del_reserved_label - remove the ILM object for a reserved label
@@ -759,6 +760,7 @@ struct mpls_ilm *mpls_del_reserved_label(int label)
 	MPLS_EXIT;
 	return ilm;
 }
+EXPORT_SYMBOL(mpls_del_reserved_label);
 
 int __init mpls_ilm_init(void)
 {

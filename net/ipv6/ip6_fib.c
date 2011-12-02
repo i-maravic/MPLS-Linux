@@ -1592,7 +1592,9 @@ void fib6_run_gc(unsigned long expires, struct net *net)
 		del_timer(&net->ipv6.ip6_fib_timer);
 	spin_unlock_bh(&fib6_gc_lock);
 }
-//EXPORT_SYMBOL(fib6_run_gc);
+#if IS_MODULE(CONFIG_MPLS)
+EXPORT_SYMBOL(fib6_run_gc);
+#endif
 
 static void fib6_gc_timer_cb(unsigned long arg)
 {

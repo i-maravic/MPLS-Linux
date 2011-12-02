@@ -109,7 +109,7 @@ struct neighbour {
 	__u8			dead;
 	seqlock_t		ha_lock;
 	unsigned char		ha[ALIGN(MAX_ADDR_LEN, sizeof(unsigned long))];
-#ifdef CONFIG_MPLS
+#if IS_ENABLED(CONFIG_MPLS)
 	__be16			h_prot;
 #endif
 	struct hh_cache		hh;
@@ -355,7 +355,7 @@ static inline int neigh_hh_output(struct hh_cache *hh, struct sk_buff *skb)
 	return dev_queue_xmit(skb);
 }
 
-#ifdef CONFIG_MPLS
+#if IS_ENABLED(CONFIG_MPLS)
 /*
  * Checks if cached packet type is apropriate one.
  * If it isn't it overides it and cleans hh_cache.
@@ -379,7 +379,7 @@ static inline void neigh_check_type(struct neighbour *n, __be16 proto)
 static inline int neigh_output(struct neighbour *n, struct sk_buff *skb)
 {
 	struct hh_cache *hh = &n->hh;
-#ifdef CONFIG_MPLS
+#if IS_ENABLED(CONFIG_MPLS)
 	neigh_check_type(n, skb->protocol);
 #endif
 	if ((n->nud_state & NUD_CONNECTED) && hh->hh_len)

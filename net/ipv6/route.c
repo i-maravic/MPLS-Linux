@@ -56,7 +56,7 @@
 #include <net/netevent.h>
 #include <net/netlink.h>
 
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 #include <net/shim.h>
 #endif
 
@@ -271,7 +271,7 @@ static void ip6_dst_destroy(struct dst_entry *dst)
 
 	if (!(rt->dst.flags & DST_HOST))
 		dst_destroy_metrics_generic(dst);
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 	if (rt->rt6i_shim)
 		shim_destroy_blk(rt->rt6i_shim);
 #endif
@@ -1432,14 +1432,14 @@ install_route:
 			}
 		}
 	}
-#ifdef CONFIG_INET6_MPLS
-	 if (cfg->fc_shim && cfg->fc_shim->datalen ) {
+#if IS_ENABLED(CONFIG_INET6_MPLS)
+		 if (cfg->fc_shim && cfg->fc_shim->datalen) {
 			rt->rt6i_shim = shim_build_blk(cfg->fc_shim);
-			if (!rt->rt6i_shim) {
+			if (!(rt->rt6i_shim && rt->rt6i_shim->shim->build)) {
 				err = -EINVAL;
 				goto out;
-		}
-	rt->rt6i_shim->shim->build(rt->rt6i_shim, &rt->dst);
+			}
+		rt->rt6i_shim->shim->build(rt->rt6i_shim, &rt->dst);
 	}
 #endif
 	
@@ -2257,7 +2257,7 @@ static const struct nla_policy rtm_ipv6_policy[RTA_MAX+1] = {
 	[RTA_IIF]		= { .type = NLA_U32 },
 	[RTA_PRIORITY]          = { .type = NLA_U32 },
 	[RTA_METRICS]           = { .type = NLA_NESTED },
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 	[RTA_SHIM]              = { .len = sizeof(struct rtshim) },
 #endif
 };
@@ -2332,7 +2332,7 @@ static int rtm_to_fib6_config(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	if (tb[RTA_TABLE])
 		cfg->fc_table = nla_get_u32(tb[RTA_TABLE]);
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 	if (tb[RTA_SHIM])
 		cfg->fc_shim = nla_data(tb[RTA_SHIM]); 
 #endif

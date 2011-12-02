@@ -21,7 +21,7 @@
 #include <net/netlink.h>
 #include <net/inetpeer.h>
 
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 #include <net/shim.h>
 #endif
 
@@ -52,7 +52,7 @@ struct fib6_config {
 	int		fc_mx_len;
 
 	struct nl_info	fc_nlinfo;
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
     struct rtshim   *fc_shim;
 #endif
 };
@@ -123,7 +123,7 @@ struct rt6_info {
 	unsigned short			rt6i_nfheader_len;
 
 	u8				rt6i_protocol;
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 	struct shim_blk                 *rt6i_shim;
 #endif
 };

@@ -105,7 +105,7 @@ static int ip6_finish_output2(struct sk_buff *skb)
 	skb->protocol = htons(ETH_P_IPV6);
 	skb->dev = dev;
 
-#ifdef CONFIG_INET6_MPLS
+#if IS_ENABLED(CONFIG_INET6_MPLS)
 	if (dst->child) {
                skb_dst_set(skb, skb_dst_pop(skb));
                return dst_output(skb);

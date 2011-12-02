@@ -33,7 +33,6 @@ struct shim_blk {
 };
 
 extern struct shim mpls_uc_shim;
-
 /**
  *	shim_build_blk - allocate memory for a shim blk and fill it with data
  *			 from rta

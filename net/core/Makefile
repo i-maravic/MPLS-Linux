@@ -11,6 +11,7 @@ obj-y		     += dev.o ethtool.o dev_addr_lists.o dst.o netevent.o \
 			neighbour.o rtnetlink.o utils.o link_watch.o filter.o \
 			sock_diag.o
 
+obj-$(CONFIG_SHIM) += shim.o
 obj-$(CONFIG_XFRM) += flow.o
 obj-y += net-sysfs.o
 obj-$(CONFIG_NET_PKTGEN) += pktgen.o
