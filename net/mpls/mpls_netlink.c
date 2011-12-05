@@ -29,7 +29,7 @@
 #include <net/net_namespace.h>
 
 static struct genl_family genl_mpls = {
-	.id = PF_MPLS,
+	.id = GENL_ID_GENERATE,
 	.name = MPLS_NETLINK_NAME,
 	.version = 0x2,
 	.maxattr = MPLS_ATTR_MAX,
