@@ -159,7 +159,7 @@ send:
 
 	/* Send to the hardware */
 	ret = mpls_send(skb);
-	if (likely(ret == NET_XMIT_SUCCESS || ret == NET_XMIT_CN)) {
+	if (likely(ret == NET_XMIT_SUCCESS)) {
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTPACKETS);
 		MPLS_ADD_STATS(dev_net(dev), MPLS_MIB_OUTOCTETS,
 			packet_length);
@@ -170,10 +170,12 @@ out_drop:
 out_discard:
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTDISCARDS);
 out:
-		if (ready_to_tx)
-			mpls_nhlfe_release_safe(&nhlfe);
-
+		/* kfree() releases nhlfe entry
+		 * No need to call mpls_nhlfe_release()
+		 */
 		kfree_skb(skb);
+		printk(KERN_DEBUG "MPLS droped packet with %d\n",ret);
+		ret = NET_XMIT_DROP;
 	}
 
 	MPLS_EXIT;

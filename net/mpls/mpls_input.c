@@ -288,7 +288,7 @@ mpls_rcv_drop:
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
 mpls_rcv_out:
 	kfree_skb(skb);
-	MPLS_DEBUG("exit(DROP)\n");
+	printk(KERN_DEBUG "MPLS packet droped\n");
 	MPLS_EXIT;
 	return NET_RX_DROP;
 }
