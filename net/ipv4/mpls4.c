@@ -341,9 +341,6 @@ static inline int mpls4_nexthop_resolve(struct dst_entry *dst, struct sockaddr *
 	}
 
 	n = __neigh_lookup_errno(
-#if defined(CONFIG_ATM_CLIP) || defined(CONFIG_ATM_CLIP_MODULE)
-		dev->type == ARPHRD_ATM ? clip_tbl_hook :
-#endif
 		&arp_tbl, &nexthop, dev);
 
 	if (IS_ERR(n)){
