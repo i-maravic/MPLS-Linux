@@ -3775,7 +3775,6 @@ static void rtl_init_rxcfg(struct rtl8169_private *tp)
 static void rtl8169_init_ring_indexes(struct rtl8169_private *tp)
 {
 	tp->dirty_tx = tp->dirty_rx = tp->cur_tx = tp->cur_rx = 0;
-	netdev_reset_queue(tp->dev);
 }
 
 static void rtl_hw_jumbo_enable(struct rtl8169_private *tp)
@@ -5327,6 +5326,7 @@ static void rtl8169_tx_clear(struct rtl8169_private *tp)
 {
 	rtl8169_tx_clear_range(tp, tp->dirty_tx, NUM_TX_DESC);
 	tp->cur_tx = tp->dirty_tx = 0;
+	netdev_reset_queue(tp->dev);
 }
 
 static void rtl8169_schedule_work(struct net_device *dev, work_func_t task)
@@ -5647,15 +5647,14 @@ static void rtl8169_tx_interrupt(struct net_device *dev,
 		rtl8169_unmap_tx_skb(&tp->pci_dev->dev, tx_skb,
 				     tp->TxDescArray + entry);
 		if (status & LastFrag) {
-			bytes_compl += tx_skb->skb->len;
 			tx_compl++;
+			bytes_compl += tx_skb->skb->len;
 			dev_kfree_skb(tx_skb->skb);
 			tx_skb->skb = NULL;
 		}
 		dirty_tx++;
 		tx_left--;
 	}
-
 	dev->stats.tx_packets += tx_compl;
 	dev->stats.tx_bytes += bytes_compl;
 
