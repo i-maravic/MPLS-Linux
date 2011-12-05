@@ -479,7 +479,7 @@ int efx_probe_tx_queue(struct efx_tx_queue *tx_queue)
 		  tx_queue->queue, efx->txq_entries, tx_queue->ptr_mask);
 
 	/* Allocate software ring */
-	tx_queue->buffer = kzalloc(entries * sizeof(*tx_queue->buffer),
+	tx_queue->buffer = kcalloc(entries, sizeof(*tx_queue->buffer),
 				   GFP_KERNEL);
 	if (!tx_queue->buffer)
 		return -ENOMEM;
@@ -1173,10 +1173,10 @@ static int efx_enqueue_skb_tso(struct efx_tx_queue *tx_queue,
 			goto mem_err;
 	}
 
+	netdev_tx_sent_queue(tx_queue->core_txq, skb->len);
+
 	/* Pass off to hardware */
 	efx_nic_push_buffers(tx_queue);
-
-	netdev_tx_sent_queue(tx_queue->core_txq, skb->len);
 
 	tx_queue->tso_bursts++;
 	return NETDEV_TX_OK;

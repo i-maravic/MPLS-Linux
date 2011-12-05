@@ -1,47 +1,16 @@
 /*
- * cc770.h - Bosch CC770 and Intel AN82527 network device driver
+ * Core driver for the CC770 and AN82527 CAN controllers
  *
  * Copyright (C) 2009, 2011 Wolfgang Grandegger <wg@grandegger.com>
  *
- * Derived from the old Socket-CAN i82527 driver:
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the version 2 of the GNU General Public License
+ * as published by the Free Software Foundation
  *
- * Copyright (c) 2002-2007 Volkswagen Group Electronic Research
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of Volkswagen nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * Alternatively, provided that this notice is retained in full, this
- * software may be distributed under the terms of the GNU General
- * Public License ("GPL") version 2, in which case the provisions of the
- * GPL apply INSTEAD OF those given above.
- *
- * The provided data structures and external interfaces from this code
- * are not restricted to be used by modules with a GPL compatible license.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
- *
- * Send feedback to <socketcan-users@lists.berlios.de>
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
 
 #ifndef CC770_DEV_H
@@ -56,7 +25,7 @@ struct cc770_msgobj {
 	u8 config;
 	u8 data[8];
 	u8 dontuse;		/* padding */
-} __attribute__ ((packed));
+} __packed;
 
 struct cc770_regs {
 	union {
@@ -100,7 +69,7 @@ struct cc770_regs {
 			u8 serial_reset_addr;
 		};
 	};
-} __attribute__ ((packed));
+} __packed;
 
 /* Control Register (0x00) */
 #define CTRL_INI	0x01	/* Initialization */
@@ -124,26 +93,13 @@ struct cc770_regs {
 #define STAT_WARN	0x40	/* Warning Status */
 #define STAT_BOFF	0x80	/* Bus Off Status */
 
-/* CPU Interface Register (0x02) */
-#define CPUIF_CEN	0x01	/* Clock Out Enable */
-#define CPUIF_MUX	0x04	/* Multiplex */
-#define CPUIF_SLP	0x08	/* Sleep */
-#define CPUIF_PWD	0x10	/* Power Down Mode */
-#define CPUIF_DMC	0x20	/* Divide Memory Clock */
-#define CPUIF_DSC	0x40	/* Divide System Clock */
-#define CPUIF_RST	0x80	/* Hardware Reset Status */
-
-/* Clock Out Register (0x1f) */
-#define CLKOUT_CD_MASK  0x0f	/* Clock Divider mask */
-#define CLKOUT_SL_MASK	0x30	/* Slew Rate mask */
-#define CLKOUT_SL_SHIFT	4
-
-/* Bus Configuration Register (0x2f) */
-#define BUSCFG_DR0	0x01	/* Disconnect RX0 Input / Select RX input */
-#define BUSCFG_DR1	0x02	/* Disconnect RX1 Input / Silent mode */
-#define BUSCFG_DT1	0x08	/* Disconnect TX1 Output */
-#define BUSCFG_POL	0x20	/* Polarity dominant or recessive */
-#define BUSCFG_CBY	0x40	/* Input Comparator Bypass */
+/*
+ * CPU Interface Register (0x02)
+ * Clock Out Register (0x1f)
+ * Bus Configuration Register (0x2f)
+ *
+ * see include/linux/can/platform/cc770.h
+ */
 
 /* Message Control Register 0 (Base Address + 0x0) */
 #define INTPND_RES	0x01	/* No Interrupt pending */
@@ -185,6 +141,7 @@ struct cc770_regs {
 
 #define CC770_IO_SIZE	0x100
 #define CC770_MAX_IRQ	20	/* max. number of interrupts handled in ISR */
+#define CC770_MAX_MSG	4	/* max. number of messages handled in ISR */
 
 #define CC770_ECHO_SKB_MAX	1
 
@@ -197,7 +154,7 @@ struct cc770_regs {
 /*
  * Message objects and flags used by this driver
  */
-#define CC770_OBJ_FLAG_RX 	0x01
+#define CC770_OBJ_FLAG_RX	0x01
 #define CC770_OBJ_FLAG_RTR	0x02
 #define CC770_OBJ_FLAG_EFF	0x04
 
@@ -217,7 +174,6 @@ enum {
  */
 struct cc770_priv {
 	struct can_priv can;	/* must be the first member */
-	int open_time;
 	struct sk_buff *echo_skb;
 
 	/* the lower-layer is responsible for appropriate locking */
@@ -229,8 +185,8 @@ struct cc770_priv {
 	void *priv;		/* for board-specific data */
 	struct net_device *dev;
 
-	void __iomem *reg_base;	/* ioremap'ed address to registers */
-	unsigned long irq_flags;	/* for request_irq() */
+	void __iomem *reg_base;	 /* ioremap'ed address to registers */
+	unsigned long irq_flags; /* for request_irq() */
 
 	unsigned char obj_flags[CC770_OBJ_MAX];
 	u8 control_normal_mode;	/* Control register for normal mode */

@@ -112,11 +112,6 @@
 #include <net/arp.h>
 #include <net/ax25.h>
 #include <net/netrom.h>
-#if defined(CONFIG_ATM_CLIP) || defined(CONFIG_ATM_CLIP_MODULE)
-#include <net/atmclip.h>
-struct neigh_table *clip_tbl_hook;
-EXPORT_SYMBOL(clip_tbl_hook);
-#endif
 
 #include <asm/system.h>
 #include <linux/uaccess.h>
@@ -164,7 +159,6 @@ static const struct neigh_ops arp_broken_ops = {
 
 struct neigh_table arp_tbl = {
 	.family		= AF_INET,
-	.entry_size	= sizeof(struct neighbour) + 4,
 	.key_len	= 4,
 	.hash		= arp_hash,
 	.constructor	= arp_constructor,

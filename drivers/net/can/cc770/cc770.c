@@ -1,53 +1,23 @@
 /*
- * cc770.c - Bosch CC770 and Intel AN82527 network device driver
+ * Core driver for the CC770 and AN82527 CAN controllers
  *
  * Copyright (C) 2009, 2011 Wolfgang Grandegger <wg@grandegger.com>
  *
- * Derived from the old Socket-CAN i82527 driver:
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the version 2 of the GNU General Public License
+ * as published by the Free Software Foundation
  *
- * Copyright (c) 2002-2007 Volkswagen Group Electronic Research
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of Volkswagen nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * Alternatively, provided that this notice is retained in full, this
- * software may be distributed under the terms of the GNU General
- * Public License ("GPL") version 2, in which case the provisions of the
- * GPL apply INSTEAD OF those given above.
- *
- * The provided data structures and external interfaces from this code
- * are not restricted to be used by modules with a GPL compatible license.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
- *
- * Send feedback to <socketcan-users@lists.berlios.de>
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/version.h>
 #include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
@@ -65,14 +35,13 @@
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
 #include <linux/can/dev.h>
+#include <linux/can/platform/cc770.h>
 
 #include "cc770.h"
 
-#define DRV_NAME  "cc770"
-
 MODULE_AUTHOR("Wolfgang Grandegger <wg@grandegger.com>");
 MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION(DRV_NAME "CAN netdevice driver");
+MODULE_DESCRIPTION(KBUILD_MODNAME "CAN netdevice driver");
 
 /*
  * The CC770 is a CAN controller from Bosch, which is 100% compatible
@@ -123,7 +92,7 @@ static unsigned char cc770_obj_flags[CC770_OBJ_MAX] = {
 };
 
 static struct can_bittiming_const cc770_bittiming_const = {
-	.name = DRV_NAME,
+	.name = KBUILD_MODNAME,
 	.tseg1_min = 1,
 	.tseg1_max = 16,
 	.tseg2_min = 1,
@@ -149,7 +118,7 @@ static void enable_all_objs(const struct net_device *dev)
 	unsigned char obj_flags;
 	unsigned int o, mo;
 
-	for (o = 0; o <  CC770_OBJ_MAX; o++) {
+	for (o = 0; o < ARRAY_SIZE(priv->obj_flags); o++) {
 		obj_flags = priv->obj_flags[o];
 		mo = obj2msgobj(o);
 
@@ -208,13 +177,13 @@ static void enable_all_objs(const struct net_device *dev)
 
 static void disable_all_objs(const struct cc770_priv *priv)
 {
-	int i, mo;
+	int o, mo;
 
-	for (i = 0; i <  CC770_OBJ_MAX; i++) {
-		mo = obj2msgobj(i);
+	for (o = 0; o <  ARRAY_SIZE(priv->obj_flags); o++) {
+		mo = obj2msgobj(o);
 
-		if (priv->obj_flags[i] & CC770_OBJ_FLAG_RX) {
-			if (i > 0 && priv->control_normal_mode & CTRL_EAF)
+		if (priv->obj_flags[o] & CC770_OBJ_FLAG_RX) {
+			if (o > 0 && priv->control_normal_mode & CTRL_EAF)
 				continue;
 
 			cc770_write_reg(priv, msgobj[mo].ctrl1,
@@ -287,7 +256,7 @@ static void chipset_init(struct cc770_priv *priv)
 	cc770_write_reg(priv, clkout, priv->clkout);
 
 	/* Configure CPU interface / CLKOUT enable */
-	cc770_write_reg(priv, cpu_interface, priv->cpu_interface | CPUIF_CEN);
+	cc770_write_reg(priv, cpu_interface, priv->cpu_interface);
 
 	/* Set bus configuration  */
 	cc770_write_reg(priv, bus_config, priv->bus_config);
@@ -342,10 +311,10 @@ static int cc770_probe_chip(struct net_device *dev)
 	if (cc770_read_reg(priv, cpu_interface) & CPUIF_RST) {
 		netdev_info(dev, "probing @0x%p failed (reset)\n",
 			    priv->reg_base);
-		return 0;
+		return -ENODEV;
 	}
 
-	/* Write and read back test pattern */
+	/* Write and read back test pattern (some arbitrary values) */
 	cc770_write_reg(priv, msgobj[1].data[1], 0x25);
 	cc770_write_reg(priv, msgobj[2].data[3], 0x52);
 	cc770_write_reg(priv, msgobj[10].data[6], 0xc3);
@@ -354,14 +323,14 @@ static int cc770_probe_chip(struct net_device *dev)
 	    (cc770_read_reg(priv, msgobj[10].data[6]) != 0xc3)) {
 		netdev_info(dev, "probing @0x%p failed (pattern)\n",
 			    priv->reg_base);
-		return 0;
+		return -ENODEV;
 	}
 
 	/* Check if this chip is a CC770 supporting additional functions */
 	if (cc770_read_reg(priv, control) & CTRL_EAF)
 		priv->control_normal_mode |= CTRL_EAF;
 
-	return 1;
+	return 0;
 }
 
 static void cc770_start(struct net_device *dev)
@@ -378,16 +347,10 @@ static void cc770_start(struct net_device *dev)
 
 static int cc770_set_mode(struct net_device *dev, enum can_mode mode)
 {
-	struct cc770_priv *priv = netdev_priv(dev);
-
-	if (!priv->open_time)
-		return -EINVAL;
-
 	switch (mode) {
 	case CAN_MODE_START:
 		cc770_start(dev);
-		if (netif_queue_stopped(dev))
-			netif_wake_queue(dev);
+		netif_wake_queue(dev);
 		break;
 
 	default:
@@ -413,6 +376,17 @@ static int cc770_set_bittiming(struct net_device *dev)
 
 	cc770_write_reg(priv, bit_timing_0, btr0);
 	cc770_write_reg(priv, bit_timing_1, btr1);
+
+	return 0;
+}
+
+static int cc770_get_berr_counter(const struct net_device *dev,
+				  struct can_berr_counter *bec)
+{
+	struct cc770_priv *priv = netdev_priv(dev);
+
+	bec->txerr = cc770_read_reg(priv, tx_error_counter);
+	bec->rxerr = cc770_read_reg(priv, rx_error_counter);
 
 	return 0;
 }
@@ -451,26 +425,18 @@ static netdev_tx_t cc770_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (id & CAN_EFF_FLAG) {
 		id &= CAN_EFF_MASK;
 		cc770_write_reg(priv, msgobj[mo].config,
-				(dlc << 4) + rtr + MSGCFG_XTD);
-		cc770_write_reg(priv, msgobj[mo].id[3],
-				(id << 3) & 0xFFU);
-		cc770_write_reg(priv, msgobj[mo].id[2],
-				(id >> 5) & 0xFFU);
-		cc770_write_reg(priv, msgobj[mo].id[1],
-				(id >> 13) & 0xFFU);
-		cc770_write_reg(priv, msgobj[mo].id[0],
-				(id >> 21) & 0xFFU);
+				(dlc << 4) | rtr | MSGCFG_XTD);
+		cc770_write_reg(priv, msgobj[mo].id[3], id << 3);
+		cc770_write_reg(priv, msgobj[mo].id[2], id >> 5);
+		cc770_write_reg(priv, msgobj[mo].id[1], id >> 13);
+		cc770_write_reg(priv, msgobj[mo].id[0], id >> 21);
 	} else {
 		id &= CAN_SFF_MASK;
-		cc770_write_reg(priv, msgobj[mo].config,
-				(dlc << 4) + rtr);
-		cc770_write_reg(priv, msgobj[mo].id[0],
-				(id >> 3) & 0xFFU);
-		cc770_write_reg(priv, msgobj[mo].id[1],
-				(id << 5) & 0xFFU);
+		cc770_write_reg(priv, msgobj[mo].config, (dlc << 4) | rtr);
+		cc770_write_reg(priv, msgobj[mo].id[0], id >> 3);
+		cc770_write_reg(priv, msgobj[mo].id[1], id << 5);
 	}
 
-	dlc &= 0x0f;		/* restore length only */
 	for (i = 0; i < dlc; i++)
 		cc770_write_reg(priv, msgobj[mo].data[i], cf->data[i]);
 
@@ -503,7 +469,7 @@ static void cc770_rx(struct net_device *dev, unsigned int mo, u8 ctrl1)
 	int i;
 
 	skb = alloc_can_skb(dev, &cf);
-	if (skb == NULL)
+	if (!skb)
 		return;
 
 	config = cc770_read_reg(priv, msgobj[mo].config);
@@ -554,8 +520,14 @@ static int cc770_err(struct net_device *dev, u8 status)
 	netdev_dbg(dev, "status interrupt (%#x)\n", status);
 
 	skb = alloc_can_err_skb(dev, &cf);
-	if (skb == NULL)
+	if (!skb)
 		return -ENOMEM;
+
+	/* Use extended functions of the CC770 */
+	if (priv->control_normal_mode & CTRL_EAF) {
+		cf->data[6] = cc770_read_reg(priv, tx_error_counter);
+		cf->data[7] = cc770_read_reg(priv, rx_error_counter);
+	}
 
 	if (status & STAT_BOFF) {
 		/* Disable interrupts */
@@ -565,9 +537,23 @@ static int cc770_err(struct net_device *dev, u8 status)
 		can_bus_off(dev);
 	} else if (status & STAT_WARN) {
 		cf->can_id |= CAN_ERR_CRTL;
-		cf->data[1] = CAN_ERR_CRTL_RX_WARNING | CAN_ERR_CRTL_TX_WARNING;
-		priv->can.state = CAN_STATE_ERROR_WARNING;
-		priv->can.can_stats.error_warning++;
+		/* Only the CC770 does show error passive */
+		if (cf->data[7] > 127) {
+			cf->data[1] = CAN_ERR_CRTL_RX_PASSIVE |
+				CAN_ERR_CRTL_TX_PASSIVE;
+			priv->can.state = CAN_STATE_ERROR_PASSIVE;
+			priv->can.can_stats.error_passive++;
+		} else {
+			cf->data[1] = CAN_ERR_CRTL_RX_WARNING |
+				CAN_ERR_CRTL_TX_WARNING;
+			priv->can.state = CAN_STATE_ERROR_WARNING;
+			priv->can.can_stats.error_warning++;
+		}
+	} else {
+		/* Back to error avtive */
+		cf->can_id |= CAN_ERR_PROT;
+		cf->data[2] = CAN_ERR_PROT_ACTIVE;
+		priv->can.state = CAN_STATE_ERROR_ACTIVE;
 	}
 
 	lec = status & STAT_LEC_MASK;
@@ -628,8 +614,9 @@ static void cc770_rx_interrupt(struct net_device *dev, unsigned int o)
 	struct net_device_stats *stats = &dev->stats;
 	unsigned int mo = obj2msgobj(o);
 	u8 ctrl1;
+	int n = CC770_MAX_MSG;
 
-	while (1) {
+	while (n--) {
 		ctrl1 = cc770_read_reg(priv, msgobj[mo].ctrl1);
 
 		if (!(ctrl1 & NEWDAT_SET))  {
@@ -667,8 +654,9 @@ static void cc770_rtr_interrupt(struct net_device *dev, unsigned int o)
 	struct cc770_priv *priv = netdev_priv(dev);
 	unsigned int mo = obj2msgobj(o);
 	u8 ctrl0, ctrl1;
+	int n = CC770_MAX_MSG;
 
-	while (1) {
+	while (n--) {
 		ctrl0 = cc770_read_reg(priv, msgobj[mo].ctrl0);
 		if (!(ctrl0 & INTPND_SET))
 			break;
@@ -772,7 +760,7 @@ static int cc770_open(struct net_device *dev)
 		return err;
 
 	err = request_irq(dev->irq, &cc770_interrupt, priv->irq_flags,
-			  dev->name, (void *)dev);
+			  dev->name, dev);
 	if (err) {
 		close_candev(dev);
 		return -EAGAIN;
@@ -780,7 +768,6 @@ static int cc770_open(struct net_device *dev)
 
 	/* init and start chip */
 	cc770_start(dev);
-	priv->open_time = jiffies;
 
 	netif_start_queue(dev);
 
@@ -789,15 +776,11 @@ static int cc770_open(struct net_device *dev)
 
 static int cc770_close(struct net_device *dev)
 {
-	struct cc770_priv *priv = netdev_priv(dev);
-
 	netif_stop_queue(dev);
 	set_reset_mode(dev);
 
-	free_irq(dev->irq, (void *)dev);
+	free_irq(dev->irq, dev);
 	close_candev(dev);
-
-	priv->open_time = 0;
 
 	return 0;
 }
@@ -844,9 +827,11 @@ static const struct net_device_ops cc770_netdev_ops = {
 int register_cc770dev(struct net_device *dev)
 {
 	struct cc770_priv *priv = netdev_priv(dev);
+	int err;
 
-	if (!cc770_probe_chip(dev))
-		return -ENODEV;
+	err = cc770_probe_chip(dev);
+	if (err)
+		return err;
 
 	dev->netdev_ops = &cc770_netdev_ops;
 
@@ -854,6 +839,7 @@ int register_cc770dev(struct net_device *dev)
 
 	/* Should we use additional functions? */
 	if (!i82527_compat && priv->control_normal_mode & CTRL_EAF) {
+		priv->can.do_get_berr_counter = cc770_get_berr_counter;
 		priv->control_normal_mode = CTRL_IE | CTRL_EAF | CTRL_EIE;
 		netdev_dbg(dev, "i82527 mode with additional functions\n");
 	} else {
@@ -882,7 +868,7 @@ static __init int cc770_init(void)
 		cc770_obj_flags[CC770_OBJ_RX1] &= ~CC770_OBJ_FLAG_EFF;
 	}
 
-	pr_info("%s CAN netdevice driver\n", DRV_NAME);
+	pr_info("CAN netdevice driver\n");
 
 	return 0;
 }
@@ -890,6 +876,6 @@ module_init(cc770_init);
 
 static __exit void cc770_exit(void)
 {
-	pr_info("%s: driver removed\n", DRV_NAME);
+	pr_info("driver removed\n");
 }
 module_exit(cc770_exit);

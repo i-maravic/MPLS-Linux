@@ -3598,6 +3598,7 @@ static int release_tx_packet(struct niu *np, struct tx_ring_info *rp, int idx)
 static void niu_tx_work(struct niu *np, struct tx_ring_info *rp)
 {
 	struct netdev_queue *txq;
+	unsigned int tx_bytes;
 	u16 pkt_cnt, tmp;
 	int cons, index;
 	u64 cs;
@@ -3620,11 +3621,17 @@ static void niu_tx_work(struct niu *np, struct tx_ring_info *rp)
 	netif_printk(np, tx_done, KERN_DEBUG, np->dev,
 		     "%s() pkt_cnt[%u] cons[%d]\n", __func__, pkt_cnt, cons);
 
-	while (pkt_cnt--)
+	tx_bytes = 0;
+	tmp = pkt_cnt;
+	while (tmp--) {
+		tx_bytes += rp->tx_buffs[cons].skb->len;
 		cons = release_tx_packet(np, rp, cons);
+	}
 
 	rp->cons = cons;
 	smp_mb();
+
+	netdev_tx_completed_queue(txq, pkt_cnt, tx_bytes);
 
 out:
 	if (unlikely(netif_tx_queue_stopped(txq) &&
@@ -4326,6 +4333,7 @@ static void niu_free_channels(struct niu *np)
 			struct tx_ring_info *rp = &np->tx_rings[i];
 
 			niu_free_tx_ring_info(np, rp);
+			netdev_tx_reset_queue(netdev_get_tx_queue(np->dev, i));
 		}
 		kfree(np->tx_rings);
 		np->tx_rings = NULL;
@@ -6731,6 +6739,8 @@ static netdev_tx_t niu_start_xmit(struct sk_buff *skb,
 		prod = NEXT_TX(rp, prod);
 	}
 
+	netdev_tx_sent_queue(txq, skb->len);
+
 	if (prod < rp->prod)
 		rp->wrap_bit ^= TX_RING_KICK_WRAP;
 	rp->prod = prod;
@@ -8579,9 +8589,11 @@ static int __devinit phy_record(struct niu_parent *parent,
 	if (dev_id_1 < 0 || dev_id_2 < 0)
 		return 0;
 	if (type == PHY_TYPE_PMA_PMD || type == PHY_TYPE_PCS) {
+		/* Because of the NIU_PHY_ID_MASK being applied, the 8704
+		 * test covers the 8706 as well.
+		 */
 		if (((id & NIU_PHY_ID_MASK) != NIU_PHY_ID_BCM8704) &&
-		    ((id & NIU_PHY_ID_MASK) != NIU_PHY_ID_MRVL88X2011) &&
-		    ((id & NIU_PHY_ID_MASK) != NIU_PHY_ID_BCM8706))
+		    ((id & NIU_PHY_ID_MASK) != NIU_PHY_ID_MRVL88X2011))
 			return 0;
 	} else {
 		if ((id & NIU_PHY_ID_MASK) != NIU_PHY_ID_BCM5464R)

@@ -1387,7 +1387,7 @@ rollback:
 	for_each_net(net) {
 		for_each_netdev(net, dev) {
 			if (dev == last)
-				break;
+				goto outroll;
 
 			if (dev->flags & IFF_UP) {
 				nb->notifier_call(nb, NETDEV_GOING_DOWN, dev);
@@ -1398,6 +1398,7 @@ rollback:
 		}
 	}
 
+outroll:
 	raw_notifier_chain_unregister(&netdev_chain, nb);
 	goto unlock;
 }
@@ -4211,6 +4212,12 @@ static int dev_seq_open(struct inode *inode, struct file *file)
 			    sizeof(struct dev_iter_state));
 }
 
+int dev_seq_open_ops(struct inode *inode, struct file *file,
+		     const struct seq_operations *ops)
+{
+	return seq_open_net(inode, file, ops, sizeof(struct dev_iter_state));
+}
+
 static const struct file_operations dev_seq_fops = {
 	.owner	 = THIS_MODULE,
 	.open    = dev_seq_open,
@@ -4461,7 +4468,7 @@ static void dev_change_rx_flags(struct net_device *dev, int flags)
 
 static int __dev_set_promiscuity(struct net_device *dev, int inc)
 {
-	unsigned short old_flags = dev->flags;
+	unsigned int old_flags = dev->flags;
 	uid_t uid;
 	gid_t gid;
 
@@ -4518,7 +4525,7 @@ static int __dev_set_promiscuity(struct net_device *dev, int inc)
  */
 int dev_set_promiscuity(struct net_device *dev, int inc)
 {
-	unsigned short old_flags = dev->flags;
+	unsigned int old_flags = dev->flags;
 	int err;
 
 	err = __dev_set_promiscuity(dev, inc);
@@ -4545,7 +4552,7 @@ EXPORT_SYMBOL(dev_set_promiscuity);
 
 int dev_set_allmulti(struct net_device *dev, int inc)
 {
-	unsigned short old_flags = dev->flags;
+	unsigned int old_flags = dev->flags;
 
 	ASSERT_RTNL();
 
@@ -4648,7 +4655,7 @@ EXPORT_SYMBOL(dev_get_flags);
 
 int __dev_change_flags(struct net_device *dev, unsigned int flags)
 {
-	int old_flags = dev->flags;
+	unsigned int old_flags = dev->flags;
 	int ret;
 
 	ASSERT_RTNL();
@@ -4731,10 +4738,10 @@ void __dev_notify_flags(struct net_device *dev, unsigned int old_flags)
  *	Change settings on device based state flags. The flags are
  *	in the userspace exported format.
  */
-int dev_change_flags(struct net_device *dev, unsigned flags)
+int dev_change_flags(struct net_device *dev, unsigned int flags)
 {
-	int ret, changes;
-	int old_flags = dev->flags;
+	int ret;
+	unsigned int changes, old_flags = dev->flags;
 
 	ret = __dev_change_flags(dev, flags);
 	if (ret < 0)

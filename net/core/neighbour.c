@@ -273,7 +273,7 @@ int neigh_ifdown(struct neigh_table *tbl, struct net_device *dev)
 }
 EXPORT_SYMBOL(neigh_ifdown);
 
-static struct neighbour *neigh_alloc(struct neigh_table *tbl)
+static struct neighbour *neigh_alloc(struct neigh_table *tbl, struct net_device *dev)
 {
 	struct neighbour *n = NULL;
 	unsigned long now = jiffies;
@@ -288,7 +288,15 @@ static struct neighbour *neigh_alloc(struct neigh_table *tbl)
 			goto out_entries;
 	}
 
-	n = kmem_cache_zalloc(tbl->kmem_cachep, GFP_ATOMIC);
+	if (tbl->entry_size)
+		n = kzalloc(tbl->entry_size, GFP_ATOMIC);
+	else {
+		int sz = sizeof(*n) + tbl->key_len;
+
+		sz = ALIGN(sz, NEIGH_PRIV_ALIGN);
+		sz += dev->neigh_priv_len;
+		n = kzalloc(sz, GFP_ATOMIC);
+	}
 	if (!n)
 		goto out_entries;
 
@@ -463,7 +471,7 @@ struct neighbour *neigh_create(struct neigh_table *tbl, const void *pkey,
 	u32 hash_val;
 	int key_len = tbl->key_len;
 	int error;
-	struct neighbour *n1, *rc, *n = neigh_alloc(tbl);
+	struct neighbour *n1, *rc, *n = neigh_alloc(tbl, dev);
 	struct neigh_hash_table *nht;
 
 	if (!n) {
@@ -479,6 +487,14 @@ struct neighbour *neigh_create(struct neigh_table *tbl, const void *pkey,
 	if (tbl->constructor &&	(error = tbl->constructor(n)) < 0) {
 		rc = ERR_PTR(error);
 		goto out_neigh_release;
+	}
+
+	if (dev->netdev_ops->ndo_neigh_construct) {
+		error = dev->netdev_ops->ndo_neigh_construct(n);
+		if (error < 0) {
+			rc = ERR_PTR(error);
+			goto out_neigh_release;
+		}
 	}
 
 	/* Device specific setup. */
@@ -678,18 +694,14 @@ static inline void neigh_parms_put(struct neigh_parms *parms)
 		neigh_parms_destroy(parms);
 }
 
-static void neigh_destroy_rcu(struct rcu_head *head)
-{
-	struct neighbour *neigh = container_of(head, struct neighbour, rcu);
-
-	kmem_cache_free(neigh->tbl->kmem_cachep, neigh);
-}
 /*
  *	neighbour must already be out of the table;
  *
  */
 void neigh_destroy(struct neighbour *neigh)
 {
+	struct net_device *dev = neigh->dev;
+
 	NEIGH_CACHE_STAT_INC(neigh->tbl, destroys);
 
 	if (!neigh->dead) {
@@ -705,13 +717,16 @@ void neigh_destroy(struct neighbour *neigh)
 	skb_queue_purge(&neigh->arp_queue);
 	neigh->arp_queue_len_bytes = 0;
 
-	dev_put(neigh->dev);
+	if (dev->netdev_ops->ndo_neigh_destroy)
+		dev->netdev_ops->ndo_neigh_destroy(neigh);
+
+	dev_put(dev);
 	neigh_parms_put(neigh->parms);
 
 	NEIGH_PRINTK2("neigh %p is destroyed.\n", neigh);
 
 	atomic_dec(&neigh->tbl->entries);
-	call_rcu(&neigh->rcu, neigh_destroy_rcu);
+	kfree_rcu(neigh, rcu);
 }
 EXPORT_SYMBOL(neigh_destroy);
 
@@ -1483,11 +1498,6 @@ void neigh_table_init_no_netlink(struct neigh_table *tbl)
 	tbl->parms.reachable_time =
 			  neigh_rand_reach_time(tbl->parms.base_reachable_time);
 
-	if (!tbl->kmem_cachep)
-		tbl->kmem_cachep =
-			kmem_cache_create(tbl->id, tbl->entry_size, 0,
-					  SLAB_HWCACHE_ALIGN|SLAB_PANIC,
-					  NULL);
 	tbl->stats = alloc_percpu(struct neigh_statistics);
 	if (!tbl->stats)
 		panic("cannot create neighbour cache statistics");
@@ -1571,9 +1581,6 @@ int neigh_table_clear(struct neigh_table *tbl)
 
 	free_percpu(tbl->stats);
 	tbl->stats = NULL;
-
-	kmem_cache_destroy(tbl->kmem_cachep);
-	tbl->kmem_cachep = NULL;
 
 	return 0;
 }

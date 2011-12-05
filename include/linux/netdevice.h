@@ -974,6 +974,8 @@ struct net_device_ops {
 						    netdev_features_t features);
 	int			(*ndo_set_features)(struct net_device *dev,
 						    netdev_features_t features);
+	int			(*ndo_neigh_construct)(struct neighbour *n);
+	void			(*ndo_neigh_destroy)(struct neighbour *n);
 };
 
 /*
@@ -1080,6 +1082,7 @@ struct net_device {
 	unsigned char		perm_addr[MAX_ADDR_LEN]; /* permanent hw address */
 	unsigned char		addr_assign_type; /* hw address assignment type */
 	unsigned char		addr_len;	/* hardware address length	*/
+	unsigned char		neigh_priv_len;
 	unsigned short          dev_id;		/* for shared network cards */
 
 	spinlock_t		addr_list_lock;
@@ -2552,6 +2555,8 @@ extern void		net_disable_timestamp(void);
 extern void *dev_seq_start(struct seq_file *seq, loff_t *pos);
 extern void *dev_seq_next(struct seq_file *seq, void *v, loff_t *pos);
 extern void dev_seq_stop(struct seq_file *seq, void *v);
+extern int dev_seq_open_ops(struct inode *inode, struct file *file,
+			    const struct seq_operations *ops);
 #endif
 
 extern int netdev_class_create_file(struct class_attribute *class_attr);
