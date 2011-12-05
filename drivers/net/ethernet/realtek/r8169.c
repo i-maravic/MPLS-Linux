@@ -5326,7 +5326,6 @@ static void rtl8169_tx_clear(struct rtl8169_private *tp)
 {
 	rtl8169_tx_clear_range(tp, tp->dirty_tx, NUM_TX_DESC);
 	tp->cur_tx = tp->dirty_tx = 0;
-	netdev_reset_queue(tp->dev);
 }
 
 static void rtl8169_schedule_work(struct net_device *dev, work_func_t task)
@@ -5460,8 +5459,6 @@ static int rtl8169_xmit_frags(struct rtl8169_private *tp, struct sk_buff *skb,
 		tp->tx_skb[entry].skb = skb;
 		txd->opts1 |= cpu_to_le32(LastFrag);
 	}
-
-	netdev_sent_queue(tp->dev, skb->len);
 
 	return cur_frag;
 
@@ -5627,8 +5624,6 @@ static void rtl8169_tx_interrupt(struct net_device *dev,
 				 void __iomem *ioaddr)
 {
 	unsigned int dirty_tx, tx_left;
-	unsigned int bytes_compl = 0;
-	int tx_compl = 0;
 
 	dirty_tx = tp->dirty_tx;
 	smp_rmb();
@@ -5647,18 +5642,14 @@ static void rtl8169_tx_interrupt(struct net_device *dev,
 		rtl8169_unmap_tx_skb(&tp->pci_dev->dev, tx_skb,
 				     tp->TxDescArray + entry);
 		if (status & LastFrag) {
-			tx_compl++;
-			bytes_compl += tx_skb->skb->len;
+			dev->stats.tx_packets++;
+			dev->stats.tx_bytes += tx_skb->skb->len;
 			dev_kfree_skb(tx_skb->skb);
 			tx_skb->skb = NULL;
 		}
 		dirty_tx++;
 		tx_left--;
 	}
-	dev->stats.tx_packets += tx_compl;
-	dev->stats.tx_bytes += bytes_compl;
-
-	netdev_completed_queue(dev, tx_compl, bytes_compl);
 
 	if (tp->dirty_tx != dirty_tx) {
 		tp->dirty_tx = dirty_tx;
