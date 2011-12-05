@@ -5424,7 +5424,6 @@ static int rtl8169_xmit_frags(struct rtl8169_private *tp, struct sk_buff *skb,
 	unsigned int cur_frag, entry;
 	struct TxDesc * uninitialized_var(txd);
 	struct device *d = &tp->pci_dev->dev;
-	unsigned long flag;
 
 	entry = tp->cur_tx;
 	for (cur_frag = 0; cur_frag < info->nr_frags; cur_frag++) {
@@ -5630,7 +5629,6 @@ static void rtl8169_tx_interrupt(struct net_device *dev,
 	unsigned int dirty_tx, tx_left;
 	unsigned int bytes_compl = 0;
 	int tx_compl = 0;
-	unsigned long flag;
 
 	dirty_tx = tp->dirty_tx;
 	smp_rmb();
