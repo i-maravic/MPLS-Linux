@@ -5461,9 +5461,8 @@ static int rtl8169_xmit_frags(struct rtl8169_private *tp, struct sk_buff *skb,
 		tp->tx_skb[entry].skb = skb;
 		txd->opts1 |= cpu_to_le32(LastFrag);
 	}
-	spin_lock_irqsave(&tp->lock,flag);
+
 	netdev_sent_queue(tp->dev, skb->len);
-	spin_unlock_irqrestore(&tp->lock,flag);
 
 	return cur_frag;
 
@@ -5661,9 +5660,9 @@ static void rtl8169_tx_interrupt(struct net_device *dev,
 
 	dev->stats.tx_packets += tx_compl;
 	dev->stats.tx_bytes += bytes_compl;
-	spin_lock_irqsave(&tp->lock, flag);
+
 	netdev_completed_queue(dev, tx_compl, bytes_compl);
-	spin_unlock_irqrestore(&tp->lock, flag);
+
 	if (tp->dirty_tx != dirty_tx) {
 		tp->dirty_tx = dirty_tx;
 		smp_wmb();
