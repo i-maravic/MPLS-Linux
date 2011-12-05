@@ -75,6 +75,7 @@ config INET
 config MPLS
        tristate "Multiprotocol Label Switching(MPLS) (EXPERIMENTAL)"
        depends on INET && EXPERIMENTAL
+       select SHIM
        ---help---
          In conventional IP forwarding, a particular router will typically
          consider two packets to be in the same FEC if there is some address
@@ -105,7 +106,6 @@ config MPLS
 config MPLS_DEBUG
 	bool "MPLS debugging (EXPERIMENTAL)"
 	depends on MPLS && EXPERIMENTAL
-	select SHIM
 	help
 	  You can say Y here if you want to get additional messages useful in
 	  debugging the MPLS code.
