@@ -340,8 +340,7 @@ static inline int mpls4_nexthop_resolve(struct dst_entry *dst, struct sockaddr *
 		return -EINVAL;
 	}
 
-	n = __neigh_lookup_errno(
-		&arp_tbl, &nexthop, dev);
+	n = __neigh_lookup_errno(&arp_tbl, &nexthop, dev);
 
 	if (IS_ERR(n)){
 		MPLS_EXIT;
