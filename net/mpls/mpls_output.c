@@ -43,15 +43,15 @@ static inline int mpls_send(struct sk_buff *skb)
 	struct dst_entry *dst = skb_dst(skb);
 	struct neighbour *neigh;
 
-	MPLS_DEBUG("output device = %s\n", skb->dev->name);
+	MPLS_DEBUG("output device = %s\n", dst->dev->name);
 
 	/* Be paranoid, rather than too clever. */
-	if (unlikely(skb_headroom(skb) < LL_RESERVED_SPACE(skb->dev)
-			&& skb->dev->header_ops)) {
+	if (unlikely(skb_headroom(skb) < LL_RESERVED_SPACE(dst->dev)
+			&& dst->dev->header_ops)) {
 		struct sk_buff *skb2;
 
-		skb2 = skb_realloc_headroom(skb, LL_RESERVED_SPACE(skb->dev));
-		if (skb2 == NULL) {
+		skb2 = skb_realloc_headroom(skb, LL_RESERVED_SPACE(dst->dev));
+		if (!skb2) {
 			kfree_skb(skb);
 			return -ENOMEM;
 		}
@@ -82,7 +82,7 @@ static inline int mpls_send(struct sk_buff *skb)
 /**
  *	mpls_finish_output - Apply out segment to socket buffer
  *	@sbk: Socket buffer.
- *	@nhlfe: NHLFE object containint the list of opcodes to apply.
+ *	@nhlfe: NHLFE object containing the list of opcodes to apply.
  *
  *	This function is either called by mpls_switch or mpls_output, and
  *	iterates the set of output opcodes that are configured for this NHLFE.
@@ -104,10 +104,8 @@ static inline int mpls_finish_output(
 
 	ready_to_tx = 0;
 
-	if (skb_cow_head(skb, skb_dst(skb)->header_len) < 0) {
-		kfree_skb(skb);
+	if (skb_cow_head(skb, skb_dst(skb)->header_len) < 0)
 		goto out_discard;
-	}
 
 	/* Iterate all the opcodes for this NHLFE */
 	for_each_instr(nhlfe->nhlfe_instr, mi) {
@@ -122,21 +120,21 @@ static inline int mpls_finish_output(
 		func = mpls_ops[opcode].out;
 		if (func) {
 			switch (func(&skb, NULL, &nhlfe, data)) {
-			case MPLS_RESULT_SUCCESS:
-				/*
-				 * it's ready to tx only if the opcode is SET
-				 */
-				if (ready_to_tx)
-					goto send;
-				break;
-			case MPLS_RESULT_DROP:
-				goto out_drop;
-			case MPLS_RESULT_FWD:
-			case MPLS_RESULT_RECURSE:
-			case MPLS_RESULT_DLV:
-				/* Invalid on OUTPUT */
-				WARN_ON_ONCE(1);
-				goto out_drop;
+				case MPLS_RESULT_SUCCESS:
+					/*
+					 * it's ready to tx only if the opcode is SET
+					 */
+					if (ready_to_tx)
+						goto send;
+					break;
+				case MPLS_RESULT_DROP:
+					goto out_drop;
+				case MPLS_RESULT_FWD:
+				case MPLS_RESULT_RECURSE:
+				case MPLS_RESULT_DLV:
+					/* Invalid on OUTPUT */
+					WARN_ON_ONCE(1);
+					goto out_drop;
 			}
 		}
 	}
@@ -159,27 +157,30 @@ send:
 
 	/* Send to the hardware */
 	ret = mpls_send(skb);
-	if (likely(ret == NET_XMIT_SUCCESS)) {
+	if (likely(ret == NET_XMIT_SUCCESS || ret == NET_XMIT_CN)) {
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTPACKETS);
 		MPLS_ADD_STATS(dev_net(dev), MPLS_MIB_OUTOCTETS,
 			packet_length);
 	} else {
-out_drop:
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTERRORS);
-		goto out;
-out_discard:
-		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTDISCARDS);
 out:
-		/* kfree() releases nhlfe entry
-		 * No need to call mpls_nhlfe_release()
-		 */
-		kfree_skb(skb);
 		printk(KERN_DEBUG "MPLS droped packet with %d\n",ret);
-		ret = NET_XMIT_DROP;
 	}
 
 	MPLS_EXIT;
 	return ret;
+
+out_drop:
+	/* kfree_skb() releases nhlfe entry
+	 * No need to call mpls_nhlfe_release()
+	 */
+	kfree_skb(skb);
+	MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTERRORS);
+	goto out;
+out_discard:
+	kfree_skb(skb);
+	MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTDISCARDS);
+	goto out;
 }
 
 
@@ -204,23 +205,20 @@ inline int mpls_output(struct sk_buff *skb)
 	struct mpls_nhlfe *nhlfe = NULL;
 	int ttl = sysctl_mpls_default_ttl;
 
-	MPLS_ENTER;
-
-	if (unlikely(!skb_dst(skb))) {
-		printk_ratelimited(KERN_ERR "MPLS: No dst in skb\n");
-		goto mpls_output_drop;
-	}
-
+	BUG_ON(!skb_dst(skb));
+	
 	if (unlikely(skb_dst(skb)->ops->protocol != htons(ETH_P_MPLS_UC))) {
 		printk("MPLS: Not a MPLS dst in skb\n");
 		goto mpls_output_drop;
 	}
 
 	nhlfe = container_of(skb_dst(skb), struct mpls_nhlfe, dst);
+
 	if (unlikely(!nhlfe)) {
 		printk(KERN_ERR "MPLS: unable to find NHLFE from dst\n");
 		goto mpls_output_drop;
 	}
+
 	if (unlikely(skb->protocol !=
 		nhlfe->nhlfe_proto->ethertype)) {
 		printk_ratelimited(KERN_ERR "unable to find a protocol"
@@ -245,10 +243,10 @@ inline int mpls_output(struct sk_buff *skb)
 	cb->popped_bos = 1;
 
 	return mpls_finish_output(skb, nhlfe);
-	MPLS_EXIT;
 
 mpls_output_drop:
-	MPLS_INC_STATS(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
+	MPLS_INC_STATS(dev_net(skb_dst(skb)->dev),
+		MPLS_MIB_OUTDISCARDS);
 	kfree_skb(skb);
 	MPLS_EXIT;
 	return -EINVAL;
@@ -270,20 +268,20 @@ inline int mpls_switch(struct sk_buff *skb)
 {
 	struct mpls_nhlfe *nhlfe = NULL;
 
-	MPLS_ENTER;
-	if (unlikely(!skb_dst(skb))) {
-		printk_ratelimited(KERN_ERR "MPLS: No dst in skb\n");
-		goto mpls_switch_drop;
-	}
+	BUG_ON(!skb_dst(skb));
+
 	if (unlikely(skb_dst(skb)->ops->protocol != htons(ETH_P_MPLS_UC))) {
 		printk_ratelimited(KERN_ERR "MPLS: Not a MPLS dst in skb\n");
 		goto mpls_switch_drop;
 	}
+
 	nhlfe = container_of(skb_dst(skb), struct mpls_nhlfe, dst);
+
 	if (unlikely(!nhlfe)) {
 		printk_ratelimited(KERN_ERR "MPLS: unable to find NHLFE from dst\n");
 		goto mpls_switch_drop;
 	}
+
 	if (unlikely(skb->protocol != nhlfe->nhlfe_proto->ethertype
 			&& skb->protocol != htons(ETH_P_MPLS_UC))) {
 		printk_ratelimited(KERN_ERR "MPLS: unable to find a"
@@ -291,10 +289,10 @@ inline int mpls_switch(struct sk_buff *skb)
 		goto mpls_switch_drop;
 	}
 	return mpls_finish_output(skb, nhlfe);
-	MPLS_EXIT;
 
 mpls_switch_drop:
-	MPLS_INC_STATS(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
+	MPLS_INC_STATS(dev_net(skb_dst(skb)->dev),
+		MPLS_MIB_OUTDISCARDS);
 	kfree_skb(skb);
 	MPLS_EXIT;
 	return -EINVAL;

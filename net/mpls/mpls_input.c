@@ -115,6 +115,7 @@ mpls_input_drop:
 	if (ilm)
 		mpls_ilm_release(ilm);
 
+	kfree_skb(skb);
 	MPLS_DEBUG("dropped\n");
 	MPLS_EXIT;
 	return NET_RX_DROP;
@@ -123,15 +124,19 @@ mpls_input_dlv:
 	secpath_reset(skb);
 	skb->mac_header = skb->network_header;
 	skb_reset_network_header(skb);
-	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+	if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
+		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
 		goto mpls_input_drop;
+	}
 
 	if (ip_hdr(skb)->version == 4)
 		skb->protocol = htons(ETH_P_IP);
 	else if (ip_hdr(skb)->version == 6)
 		skb->protocol = htons(ETH_P_IPV6);
-	else
+	else {
+		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
 		goto mpls_input_drop;
+	}
 
 	skb->pkt_type = PACKET_HOST;
 	__skb_tunnel_rx(skb, dev);
@@ -149,7 +154,6 @@ mpls_input_dlv:
 	return NET_RX_SUCCESS;
 
 mpls_input_fwd:
-
 	/* We are about to mangle packet. Copy it! */
 	if (skb_cow(skb,
 		LL_RESERVED_SPACE(nhlfe->dst.dev) +
@@ -157,7 +161,7 @@ mpls_input_fwd:
 
 		printk_ratelimited(KERN_ERR "MPLS: unable to cow skb\n");
 		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
-		mpls_ilm_release(ilm);
+		goto mpls_input_drop;
 	}
 
 	cb = MPLSCB(skb);
@@ -169,10 +173,8 @@ mpls_input_fwd:
 		retval = prot->ttl_expired(&skb);
 
 		if (retval) {
-			mpls_ilm_release(ilm);
 			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
-			MPLS_EXIT;
-			return retval;
+			goto mpls_input_drop;
 		}
 		/* otherwise prot->ttl_expired() must have modified the
 		 * skb and want it to be forwarded down the LSP
@@ -203,7 +205,6 @@ mpls_input_fwd:
 	(cb->ttl)--;
 
 	skb_dst_set(skb, &nhlfe->dst);
-	skb->dev = nhlfe->dst.dev;
 
 	MPLS_DEBUG("switching\n");
 	MPLS_EXIT;
@@ -272,23 +273,17 @@ inline int mpls_skb_recv(struct sk_buff *skb,
 		goto mpls_rcv_err;
 	}
 
-	if (mpls_input(skb, dev, &label, labelspace))
-		/*	don't go to mpls_rcv_drop
-		 *	because we've already incremented drop counter
-		 */
-		goto mpls_rcv_out;
+	return mpls_input(skb, dev, &label, labelspace);
 
-	MPLS_EXIT;
-	return NET_RX_SUCCESS;
-
-mpls_rcv_err:
-	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
-	goto mpls_rcv_out;
-mpls_rcv_drop:
-	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
 mpls_rcv_out:
 	kfree_skb(skb);
 	printk(KERN_DEBUG "MPLS packet droped\n");
 	MPLS_EXIT;
 	return NET_RX_DROP;
+mpls_rcv_err:
+	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
+	goto mpls_rcv_out;
+mpls_rcv_drop:
+	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
+	goto mpls_rcv_out;
 }
