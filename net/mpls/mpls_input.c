@@ -277,7 +277,6 @@ inline int mpls_skb_recv(struct sk_buff *skb,
 
 mpls_rcv_out:
 	kfree_skb(skb);
-	printk(KERN_DEBUG "MPLS packet droped\n");
 	MPLS_EXIT;
 	return NET_RX_DROP;
 mpls_rcv_err:

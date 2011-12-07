@@ -266,7 +266,6 @@ static inline void mpls_proto_release(struct mpls_prot_driver *prot)
 	if (!prot)
 		return;
 	atomic_dec(&prot->__refcnt);
-	printk(KERN_DEBUG "MPLS Proto release %d\n",atomic_read(&prot->__refcnt));
 	module_put(prot->owner);
 	prot = NULL;
 }

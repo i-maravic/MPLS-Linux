@@ -161,11 +161,9 @@ send:
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTPACKETS);
 		MPLS_ADD_STATS(dev_net(dev), MPLS_MIB_OUTOCTETS,
 			packet_length);
-	} else {
+	} else
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTERRORS);
 out:
-		printk(KERN_DEBUG "MPLS droped packet with %d\n",ret);
-	}
 
 	MPLS_EXIT;
 	return ret;

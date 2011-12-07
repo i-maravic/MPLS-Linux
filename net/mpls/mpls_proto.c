@@ -50,11 +50,9 @@ int mpls_proto_remove(struct mpls_prot_driver *proto)
 
 	list_for_each_entry(proto1, &mpls_proto_list, list) {
 		if (proto == proto1) {
-			if (atomic_read(&proto->__refcnt) > 0) {
-				/*for debugging purposes, should be deleted*/
-				printk(KERN_DEBUG "atomic_read(&proto->__refcnt) %d\n",atomic_read(&proto->__refcnt));
+			if (atomic_read(&proto->__refcnt) > 0)
 				retval = -EADDRINUSE;
-			} else {
+			else {
 				list_del_rcu(&proto->list);
 				retval = 0;
 			}
@@ -75,7 +73,6 @@ static int mpls_proto_hold(struct mpls_prot_driver *prot)
 	if (!try_module_get(prot->owner))
 		return -1;
 	atomic_inc(&prot->__refcnt);
-	printk(KERN_DEBUG "MPLS proto hold %d\n",atomic_read(&prot->__refcnt));
 	return 0;
 }
 
