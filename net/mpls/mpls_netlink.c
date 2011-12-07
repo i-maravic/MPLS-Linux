@@ -934,11 +934,13 @@ static struct nla_policy genl_mpls_policy[MPLS_ATTR_MAX+1] __read_mostly = {
 
 static struct genl_ops genl_mpls_ilm_new_ops = {
 	.cmd		= MPLS_CMD_NEWILM,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_ilm_new,
 	.policy		= genl_mpls_policy,
 };
 static struct genl_ops genl_mpls_ilm_del_ops = {
 	.cmd		= MPLS_CMD_DELILM,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_ilm_del,
 	.policy		= genl_mpls_policy,
 };
@@ -951,11 +953,13 @@ static struct genl_ops genl_mpls_ilm_get_ops = {
 
 static struct genl_ops genl_mpls_nhlfe_new_ops = {
 	.cmd		= MPLS_CMD_NEWNHLFE,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_nhlfe_new,
 	.policy		= genl_mpls_policy,
 };
 static struct genl_ops genl_mpls_nhlfe_del_ops = {
 	.cmd		= MPLS_CMD_DELNHLFE,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_nhlfe_del,
 	.policy		= genl_mpls_policy,
 };
@@ -968,11 +972,13 @@ static struct genl_ops genl_mpls_nhlfe_get_ops = {
 
 static struct genl_ops genl_mpls_xc_new_ops = {
 	.cmd		= MPLS_CMD_NEWXC,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_xc_new,
 	.policy		= genl_mpls_policy,
 };
 static struct genl_ops genl_mpls_xc_del_ops = {
 	.cmd		= MPLS_CMD_DELXC,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_xc_del,
 	.policy		= genl_mpls_policy,
 };
@@ -985,6 +991,7 @@ static struct genl_ops genl_mpls_xc_get_ops = {
 
 static struct genl_ops genl_mpls_labelspace_set_ops = {
 	.cmd		= MPLS_CMD_SETLABELSPACE,
+	.flags 		= GENL_ADMIN_PERM,
 	.doit		= genl_mpls_labelspace_set,
 	.policy		= genl_mpls_policy,
 };
