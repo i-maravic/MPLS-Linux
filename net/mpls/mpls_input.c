@@ -43,7 +43,7 @@
  *	@labelspace: incoming labelspace.
  **/
 
-static inline int mpls_input(struct sk_buff *skb, struct net_device *dev,
+static int mpls_input(struct sk_buff *skb, struct net_device *dev,
 		struct mpls_label *label, int labelspace)
 {
 	struct mpls_skb_cb *cb = MPLSCB(skb);
@@ -214,11 +214,11 @@ mpls_input_fwd:
 /**
  *	mpls_skb_recv - Main MPLS packet receive function.
  *	@skb : socket buffer, containing the good stuff.
- *	@dev : device that receives the packet.
+ *	@dev : device that received the packet.
  *	@pt  : packet type handler.
  **/
 
-inline int mpls_skb_recv(struct sk_buff *skb,
+int mpls_skb_recv(struct sk_buff *skb,
 	struct net_device *dev, struct packet_type *pt,
 	struct net_device *orig)
 {

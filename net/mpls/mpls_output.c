@@ -88,7 +88,7 @@ static inline int mpls_send(struct sk_buff *skb)
  *	iterates the set of output opcodes that are configured for this NHLFE.
  **/
 
-static inline int mpls_finish_output(
+static int mpls_finish_output(
 	struct sk_buff *skb,
 	struct mpls_nhlfe *nhlfe)
 {
@@ -197,7 +197,7 @@ out_discard:
  *	is a ILM/POP + NHLFE/PUSH
  **/
 
-inline int mpls_output(struct sk_buff *skb)
+int mpls_output(struct sk_buff *skb)
 {
 	struct mpls_skb_cb *cb = MPLSCB(skb);
 	struct mpls_nhlfe *nhlfe = NULL;
@@ -262,7 +262,7 @@ mpls_output_drop:
  *	NOTE: Please note that we *push* a label. The current label was
  *	already poped in mpls_input.
  **/
-inline int mpls_switch(struct sk_buff *skb)
+int mpls_switch(struct sk_buff *skb)
 {
 	struct mpls_nhlfe *nhlfe = NULL;
 
