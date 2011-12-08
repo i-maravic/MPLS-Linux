@@ -58,7 +58,7 @@ static int mpls_stats_seq_show(struct seq_file *seq, void *v)
 	struct net *net = seq->private;
 	int i;
 	for (i = 0; mpls_mib_list[i].name; i++)
-		seq_printf(seq, "%-24s\t%lu\n", mpls_mib_list[i].name,
+		seq_printf(seq, "%-40s\t%lu\n", mpls_mib_list[i].name,
 			   snmp_fold_field((void __percpu **)
 					   net->mib.mpls_statistics,
 					   mpls_mib_list[i].entry));
