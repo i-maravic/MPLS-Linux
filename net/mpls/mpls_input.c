@@ -146,9 +146,8 @@ mpls_input_dlv:
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
 	MPLS_ADD_STATS_BH(dev_net(dev), MPLS_MIB_INOCTETS, packet_length);
 
-	netif_rx(skb);
-	/* we're done with the PDU, it now goes to another layer for handling
-	 */
+	netif_receive_skb(skb);
+
 	MPLS_DEBUG("delivering\n");
 	MPLS_EXIT;
 	return NET_RX_SUCCESS;
