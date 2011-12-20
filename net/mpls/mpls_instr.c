@@ -67,7 +67,7 @@ void mpls_instr_release(struct mpls_instr *mi)
 	MPLS_ENTER;
 	BUG_ON(!mi);
 
-	if ((mpls_ops[op].cleanup) && data)
+	if (mpls_ops[op].cleanup)
 		mpls_ops[op].cleanup(data, parent, dir);
 
 	kmem_cache_free(instr_cachep, mi);
