@@ -348,7 +348,9 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol,
 	struct mpls_instr *instr = NULL;
 	struct mpls_nhlfe *nhlfe = mpls_get_nhlfe_label(mol);
 	MPLS_ENTER;
-	BUG_ON(!nhlfe);
+	if (!nhlfe) {
+		return -EINVAL;
+	}
 
 	/* Commit the new ones */
 	if (nhlfe->nhlfe_instr) {
@@ -359,7 +361,7 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol,
 		if (unlikely(!instr_old)) {
 			mpls_nhlfe_release(nhlfe);
 			MPLS_EXIT;
-			return -1;
+			return -EINVAL;
 		}
 		mpls_instrs_unbuild(nhlfe->nhlfe_instr, instr_old);
 		mpls_instrs_free(nhlfe->nhlfe_instr);
@@ -375,7 +377,7 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol,
 				MPLS_OUT, nhlfe);
 
 		MPLS_DEBUG("Returns -1\n");
-		retval = -1;
+		retval = -EINVAL;
 	}
 	nhlfe->nhlfe_instr = instr;
 	mpls_nhlfe_release(nhlfe);
