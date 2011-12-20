@@ -77,10 +77,33 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_drop)
 MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_op_drop)
 {
 	MPLS_ENTER;
+	if (direction == MPLS_OUT) {
+		struct mpls_nhlfe *nhlfe = _mpls_as_nhlfe(parent);
+		nhlfe->dst.dev = init_net.loopback_dev;
+		
+		nhlfe->nhlfe_proto = mpls_proto_find_by_family(AF_INET);
+		if (unlikely(!nhlfe->nhlfe_proto)) {
+			MPLS_EXIT;
+			return -ENOENT;
+		}
+		dev_hold(nhlfe->dst.dev);
+	}
 	*data = NULL;
 	*last_able = 1;
 	MPLS_EXIT;
 	return 0;
+}
+
+MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_op_drop)
+{
+	MPLS_ENTER;
+	if (direction == MPLS_OUT) {
+		struct mpls_nhlfe *nhlfe = _mpls_as_nhlfe(parent);
+		mpls_proto_release(nhlfe->nhlfe_proto);
+		dev_put(nhlfe->dst.dev);
+		nhlfe->dst.dev = NULL;
+	}
+	MPLS_EXIT;
 }
 
 
@@ -837,7 +860,7 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_set_rx)
 	return MPLS_RESULT_SUCCESS;
 }
 
-
+//dodati da se povećava refcnt mpls_ptr
 MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_rx)
 {
 	struct mpls_interface *mpls_if = NULL;
@@ -947,11 +970,7 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_set)
 	return MPLS_RESULT_SUCCESS;
 }
 
-/*
- * JLEU: Are there cases where we do not want to assign a labelspace (which
- * creates the mpls_ptr) and still originate MPLS traffic?
- */
-
+//TODO dodati da se poveća refcnt od mpls_ptr
 MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set)
 {
 	struct mpls_nhlfe *nhlfe = _mpls_as_nhlfe(parent);
@@ -1703,7 +1722,7 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.out     = mpls_op_drop,
 			.build   = mpls_build_op_drop,
 			.unbuild = NULL,
-			.cleanup = NULL,
+			.cleanup = mpls_clean_op_drop,
 			.extra   = 0,
 			.msg     = "DROP",
 	},

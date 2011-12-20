@@ -348,9 +348,9 @@ int mpls_nhlfe_set_instrs(struct mpls_out_label_req *mol,
 	struct mpls_instr *instr = NULL;
 	struct mpls_nhlfe *nhlfe = mpls_get_nhlfe_label(mol);
 	MPLS_ENTER;
-	if (!nhlfe) {
+
+	if (!nhlfe)
 		return -EINVAL;
-	}
 
 	/* Commit the new ones */
 	if (nhlfe->nhlfe_instr) {
