@@ -27,6 +27,7 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/export.h>
 
 #include <net/ipv6.h>
 #include <net/ndisc.h>

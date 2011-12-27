@@ -101,7 +101,7 @@ static unsigned int nhlfe_dst_mtu(const struct dst_entry *dst)
 	BUG_ON(!dst->dev);
 	mtu = dst->dev->mtu;
 out:
-	MPLS_DEBUG("NHLFE default mtu %u\n", mtu);
+	MPLS_DEBUG("NHLFE mtu %u\n", mtu);
 	MPLS_EXIT;
 	return mtu;
 }
