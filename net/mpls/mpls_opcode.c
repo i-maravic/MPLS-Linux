@@ -437,6 +437,8 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_fwd)
 MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_fwd)
 {
 	MPLS_ENTER;
+	if (!data)
+		return;
 	/* Remove parent NHLFE from this NHLFE list */
 	mpls_list_del_init(&_mpls_as_ilm(parent)->nhlfe_entry);
 	mpls_nhlfe_release(_mpls_as_nhlfe(data));
@@ -567,6 +569,9 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_nf_fwd)
 {
 	int i;
 	MPLS_ENTER;
+	if (!data)
+		return;
+
 	for (i = 0; i < MPLS_NFMARK_NUM; i++) {
 		struct mpls_nhlfe *nhlfe = _mpls_as_nfi(data)->nfi_nhlfe[i];
 		mpls_nhlfe_release_safe(&nhlfe);
@@ -704,6 +709,9 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_ds_fwd)
 {
 	int i;
 	MPLS_ENTER;
+	if (!data)
+		return;
+
 	for (i = 0; i < MPLS_DSMARK_NUM; i++) {
 		struct mpls_nhlfe *nhlfe = _mpls_as_dfi(data)->dfi_nhlfe[i];
 		mpls_nhlfe_release_safe(&nhlfe);
@@ -822,6 +830,8 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_exp_fwd)
 {
 	int i;
 	MPLS_ENTER;
+	if (!data)
+		return;
 
 	for (i = 0; i < MPLS_EXP_NUM; i++) {
 		struct mpls_nhlfe *nhlfe = _mpls_as_efi(data)->efi_nhlfe[i];
@@ -926,6 +936,8 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set_rx)
 	struct net_device *dev = NULL;
 	/* dev is already being held */
 	MPLS_ENTER;
+	if (!data)
+		return;
 	dev = _mpls_as_netdev(data);
 	mpls_list_del_init(&_mpls_as_ilm(parent)->dev_entry);
 	dev_put(dev);
@@ -1076,10 +1088,13 @@ MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_set)
 MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set)
 {
 	struct mpls_nhlfe *nhlfe  = data;
-	struct dst_entry *dst = &nhlfe->dst;
+	struct dst_entry *dst;
 
 	MPLS_ENTER;
+	if (!data)
+		return;
 
+	dst = &nhlfe->dst;
 	memset(&nhlfe->nhlfe_nh, 0, sizeof(struct sockaddr));
 	rcu_read_lock();
 	neigh_release(dst_get_neighbour(dst));
