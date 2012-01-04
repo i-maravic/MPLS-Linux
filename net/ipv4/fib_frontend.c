@@ -46,6 +46,10 @@
 #include <net/rtnetlink.h>
 #include <net/xfrm.h>
 
+#if IS_ENABLED(CONFIG_IP_MPLS)
+#include <net/shim.h>
+#endif
+
 #ifndef CONFIG_IP_MULTIPLE_TABLES
 
 static int __net_init fib4_rules_init(struct net *net)
