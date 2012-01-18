@@ -60,8 +60,8 @@ static void iwl_init_ht_hw_capab(const struct iwl_priv *priv,
 
 	ht_info->ht_supported = true;
 
-	if (priv->cfg->ht_params &&
-	    priv->cfg->ht_params->ht_greenfield_support)
+	if (cfg(priv)->ht_params &&
+	    cfg(priv)->ht_params->ht_greenfield_support)
 		ht_info->cap |= IEEE80211_HT_CAP_GRN_FLD;
 	ht_info->cap |= IEEE80211_HT_CAP_SGI_20;
 	max_bit_rate = MAX_BIT_RATE_20_MHZ;
@@ -76,11 +76,7 @@ static void iwl_init_ht_hw_capab(const struct iwl_priv *priv,
 		ht_info->cap |= IEEE80211_HT_CAP_MAX_AMSDU;
 
 	ht_info->ampdu_factor = CFG_HT_RX_AMPDU_FACTOR_DEF;
-	if (priv->cfg->bt_params && priv->cfg->bt_params->ampdu_factor)
-		ht_info->ampdu_factor = priv->cfg->bt_params->ampdu_factor;
 	ht_info->ampdu_density = CFG_HT_MPDU_DENSITY_DEF;
-	if (priv->cfg->bt_params && priv->cfg->bt_params->ampdu_density)
-		ht_info->ampdu_density = priv->cfg->bt_params->ampdu_density;
 
 	ht_info->mcs.rx_mask[0] = 0xFF;
 	if (rx_chains_num >= 2)
@@ -141,7 +137,7 @@ int iwl_init_geos(struct iwl_priv *priv)
 	sband->bitrates = &rates[IWL_FIRST_OFDM_RATE];
 	sband->n_bitrates = IWL_RATE_COUNT_LEGACY - IWL_FIRST_OFDM_RATE;
 
-	if (priv->cfg->sku & EEPROM_SKU_CAP_11N_ENABLE)
+	if (cfg(priv)->sku & EEPROM_SKU_CAP_11N_ENABLE)
 		iwl_init_ht_hw_capab(priv, &sband->ht_cap,
 					 IEEE80211_BAND_5GHZ);
 
@@ -151,7 +147,7 @@ int iwl_init_geos(struct iwl_priv *priv)
 	sband->bitrates = rates;
 	sband->n_bitrates = IWL_RATE_COUNT_LEGACY;
 
-	if (priv->cfg->sku & EEPROM_SKU_CAP_11N_ENABLE)
+	if (cfg(priv)->sku & EEPROM_SKU_CAP_11N_ENABLE)
 		iwl_init_ht_hw_capab(priv, &sband->ht_cap,
 					 IEEE80211_BAND_2GHZ);
 
@@ -206,12 +202,12 @@ int iwl_init_geos(struct iwl_priv *priv)
 	priv->tx_power_next = max_tx_power;
 
 	if ((priv->bands[IEEE80211_BAND_5GHZ].n_channels == 0) &&
-	     priv->cfg->sku & EEPROM_SKU_CAP_BAND_52GHZ) {
+	     cfg(priv)->sku & EEPROM_SKU_CAP_BAND_52GHZ) {
 		char buf[32];
-		bus_get_hw_id(bus(priv), buf, sizeof(buf));
+		bus_get_hw_id_string(bus(priv), buf, sizeof(buf));
 		IWL_INFO(priv, "Incorrectly detected BG card as ABG. "
 			"Please send your %s to maintainer.\n", buf);
-		priv->cfg->sku &= ~EEPROM_SKU_CAP_BAND_52GHZ;
+		cfg(priv)->sku &= ~EEPROM_SKU_CAP_BAND_52GHZ;
 	}
 
 	IWL_INFO(priv, "Tunable channels: %d 802.11bg, %d 802.11a channels\n",
@@ -836,19 +832,6 @@ void iwl_print_rx_config_cmd(struct iwl_priv *priv,
 }
 #endif
 
-static void iwlagn_abort_notification_waits(struct iwl_priv *priv)
-{
-	unsigned long flags;
-	struct iwl_notification_wait *wait_entry;
-
-	spin_lock_irqsave(&priv->notif_wait_lock, flags);
-	list_for_each_entry(wait_entry, &priv->notif_waits, list)
-		wait_entry->aborted = true;
-	spin_unlock_irqrestore(&priv->notif_wait_lock, flags);
-
-	wake_up_all(&priv->notif_waitq);
-}
-
 void iwlagn_fw_error(struct iwl_priv *priv, bool ondemand)
 {
 	unsigned int reload_msec;
@@ -860,7 +843,7 @@ void iwlagn_fw_error(struct iwl_priv *priv, bool ondemand)
 	/* Cancel currently queued command. */
 	clear_bit(STATUS_HCMD_ACTIVE, &priv->shrd->status);
 
-	iwlagn_abort_notification_waits(priv);
+	iwl_abort_notification_waits(priv->shrd);
 
 	/* Keep the restart process from trying to send host
 	 * commands by clearing the ready bit */
@@ -979,9 +962,9 @@ int iwl_apm_init(struct iwl_priv *priv)
 	bus_apm_config(bus(priv));
 
 	/* Configure analog phase-lock-loop before activating to D0A */
-	if (priv->cfg->base_params->pll_cfg_val)
+	if (cfg(priv)->base_params->pll_cfg_val)
 		iwl_set_bit(bus(priv), CSR_ANA_PLL_CFG,
-			    priv->cfg->base_params->pll_cfg_val);
+			    cfg(priv)->base_params->pll_cfg_val);
 
 	/*
 	 * Set "initialization complete" bit to move adapter from
@@ -1478,7 +1461,7 @@ void iwl_bg_watchdog(unsigned long data)
 	if (iwl_is_rfkill(priv->shrd))
 		return;
 
-	timeout = priv->cfg->base_params->wd_timeout;
+	timeout = cfg(priv)->base_params->wd_timeout;
 	if (timeout == 0)
 		return;
 
@@ -1503,13 +1486,25 @@ void iwl_bg_watchdog(unsigned long data)
 
 void iwl_setup_watchdog(struct iwl_priv *priv)
 {
-	unsigned int timeout = priv->cfg->base_params->wd_timeout;
+	unsigned int timeout = cfg(priv)->base_params->wd_timeout;
 
-	if (timeout && !iwlagn_mod_params.wd_disable)
-		mod_timer(&priv->watchdog,
-			  jiffies + msecs_to_jiffies(IWL_WD_TICK(timeout)));
-	else
-		del_timer(&priv->watchdog);
+	if (!iwlagn_mod_params.wd_disable) {
+		/* use system default */
+		if (timeout && !cfg(priv)->base_params->wd_disable)
+			mod_timer(&priv->watchdog,
+				jiffies +
+				msecs_to_jiffies(IWL_WD_TICK(timeout)));
+		else
+			del_timer(&priv->watchdog);
+	} else {
+		/* module parameter overwrite default configuration */
+		if (timeout && iwlagn_mod_params.wd_disable == 2)
+			mod_timer(&priv->watchdog,
+				jiffies +
+				msecs_to_jiffies(IWL_WD_TICK(timeout)));
+		else
+			del_timer(&priv->watchdog);
+	}
 }
 
 /**
@@ -1585,34 +1580,6 @@ __le32 iwl_add_beacon_time(struct iwl_priv *priv, u32 base,
 	return cpu_to_le32(res);
 }
 
-void iwl_start_tx_ba_trans_ready(struct iwl_priv *priv,
-				 enum iwl_rxon_context_id ctx,
-				 u8 sta_id, u8 tid)
-{
-	struct ieee80211_vif *vif;
-	u8 *addr = priv->stations[sta_id].sta.sta.addr;
-
-	if (ctx == NUM_IWL_RXON_CTX)
-		ctx = priv->stations[sta_id].ctxid;
-	vif = priv->contexts[ctx].vif;
-
-	ieee80211_start_tx_ba_cb_irqsafe(vif, addr, tid);
-}
-
-void iwl_stop_tx_ba_trans_ready(struct iwl_priv *priv,
-				enum iwl_rxon_context_id ctx,
-				u8 sta_id, u8 tid)
-{
-	struct ieee80211_vif *vif;
-	u8 *addr = priv->stations[sta_id].sta.sta.addr;
-
-	if (ctx == NUM_IWL_RXON_CTX)
-		ctx = priv->stations[sta_id].ctxid;
-	vif = priv->contexts[ctx].vif;
-
-	ieee80211_stop_tx_ba_cb_irqsafe(vif, addr, tid);
-}
-
 void iwl_set_hw_rfkill_state(struct iwl_priv *priv, bool state)
 {
 	wiphy_rfkill_set_hw_state(priv->hw->wiphy, state);
@@ -1620,8 +1587,7 @@ void iwl_set_hw_rfkill_state(struct iwl_priv *priv, bool state)
 
 void iwl_nic_config(struct iwl_priv *priv)
 {
-	priv->cfg->lib->nic_config(priv);
-
+	cfg(priv)->lib->nic_config(priv);
 }
 
 void iwl_free_skb(struct iwl_priv *priv, struct sk_buff *skb)

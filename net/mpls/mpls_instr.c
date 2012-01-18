@@ -123,6 +123,7 @@ int mpls_instrs_build(struct mpls_instr_elem *mie,
 	struct mpls_instr *mi;            /* MPLS Instruction Iterator */
 	void *data;
 	int ret = -ENXIO;
+	int push = 0, pop = 0;
 	int push_is_next = 0;
 	int ops_counter[MPLS_OP_MAX] = {0};
 	MPLS_ENTER;
@@ -137,18 +138,30 @@ int mpls_instrs_build(struct mpls_instr_elem *mie,
 		}
 
 		opcode  = mie[i].mir_opcode;
-		if (opcode == MPLS_OP_DLV && i != 0) {
-			printk(KERN_ERR "MPLS: Op %s can exist"
-					" only alone\n", mpls_ops[opcode].msg);
-			goto rollback;
-		}
-
 		if (push_is_next == 1 && opcode != MPLS_OP_PUSH) {
 			printk(KERN_ERR "MPLS: set_exp or tc2exp or ds2exp"
 					" or nf2exp must be folowed by push\n");
 			goto rollback;
 		} else
 			push_is_next = 0;
+			
+		if (opcode == MPLS_OP_PUSH)
+			push = 1;
+		
+		if (opcode == MPLS_OP_POP)
+			pop = 1;
+		
+		if (push && (opcode == MPLS_OP_POP || opcode == MPLS_OP_PEEK)) {
+			printk(KERN_ERR "MPLS: %s isn't allowed after"
+					" push\n", mpls_ops[opcode].msg);
+			goto rollback;
+		}
+		
+		if (!pop && opcode == MPLS_OP_PEEK) {
+			printk(KERN_ERR "MPLS: PEEK isn't allowed without"
+					" defining any POP first!\n");
+			goto rollback;
+		}
 
 		/*
 		 * after this ops push must come next!

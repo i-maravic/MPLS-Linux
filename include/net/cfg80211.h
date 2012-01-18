@@ -505,6 +505,7 @@ struct station_parameters {
  * @STATION_INFO_CONNECTED_TIME: @connected_time filled
  * @STATION_INFO_ASSOC_REQ_IES: @assoc_req_ies filled
  * @STATION_INFO_STA_FLAGS: @sta_flags filled
+ * @STATION_INFO_BEACON_LOSS_COUNT: @beacon_loss_count filled
  */
 enum station_info_flags {
 	STATION_INFO_INACTIVE_TIME	= 1<<0,
@@ -525,7 +526,8 @@ enum station_info_flags {
 	STATION_INFO_BSS_PARAM          = 1<<15,
 	STATION_INFO_CONNECTED_TIME	= 1<<16,
 	STATION_INFO_ASSOC_REQ_IES	= 1<<17,
-	STATION_INFO_STA_FLAGS		= 1<<18
+	STATION_INFO_STA_FLAGS		= 1<<18,
+	STATION_INFO_BEACON_LOSS_COUNT	= 1<<19
 };
 
 /**
@@ -623,6 +625,7 @@ struct sta_bss_parameters {
  *	the cfg80211_new_sta() calls to notify user space of the IEs.
  * @assoc_req_ies_len: Length of assoc_req_ies buffer in octets.
  * @sta_flags: station flags mask & values
+ * @beacon_loss_count: Number of times beacon loss event has triggered.
  */
 struct station_info {
 	u32 filled;
@@ -649,6 +652,8 @@ struct station_info {
 
 	const u8 *assoc_req_ies;
 	size_t assoc_req_ies_len;
+
+	u32 beacon_loss_count;
 
 	/*
 	 * Note: Add a new enum station_info_flags value for each new field and
@@ -782,6 +787,7 @@ struct mesh_config {
 	u16 min_discovery_timeout;
 	u32 dot11MeshHWMPactivePathTimeout;
 	u16 dot11MeshHWMPpreqMinInterval;
+	u16 dot11MeshHWMPperrMinInterval;
 	u16 dot11MeshHWMPnetDiameterTraversalTime;
 	u8  dot11MeshHWMPRootMode;
 	u16 dot11MeshHWMPRannInterval;
@@ -802,6 +808,7 @@ struct mesh_config {
  * @ie_len: length of vendor information elements
  * @is_authenticated: this mesh requires authentication
  * @is_secure: this mesh uses security
+ * @mcast_rate: multicat rate for Mesh Node [6Mbps is the default for 802.11a]
  *
  * These parameters are fixed when the mesh is created.
  */
@@ -814,6 +821,7 @@ struct mesh_setup {
 	u8 ie_len;
 	bool is_authenticated;
 	bool is_secure;
+	int mcast_rate[IEEE80211_NUM_BANDS];
 };
 
 /**
@@ -1146,6 +1154,7 @@ struct cfg80211_ibss_params {
 	u8 *ssid;
 	u8 *bssid;
 	struct ieee80211_channel *channel;
+	enum nl80211_channel_type channel_type;
 	u8 *ie;
 	u8 ssid_len, ie_len;
 	u16 beacon_interval;
@@ -1342,7 +1351,12 @@ struct cfg80211_gtk_rekey_data {
  *
  * @add_station: Add a new station.
  * @del_station: Remove a station; @mac may be NULL to remove all stations.
- * @change_station: Modify a given station.
+ * @change_station: Modify a given station. Note that flags changes are not much
+ *	validated in cfg80211, in particular the auth/assoc/authorized flags
+ *	might come to the driver in invalid combinations -- make sure to check
+ *	them, also against the existing state! Also, supported_rates changes are
+ *	not checked in station mode -- drivers need to reject (or ignore) them
+ *	for anything but TDLS peers.
  * @get_station: get station information for the station identified by @mac
  * @dump_station: dump station callback -- resume dump at index @idx
  *
@@ -1399,7 +1413,8 @@ struct cfg80211_gtk_rekey_data {
  *	have changed. The actual parameter values are available in
  *	struct wiphy. If returning an error, no value should be changed.
  *
- * @set_tx_power: set the transmit power according to the parameters
+ * @set_tx_power: set the transmit power according to the parameters,
+ *	the power passed is in mBm, to get dBm use MBM_TO_DBM().
  * @get_tx_power: store the current TX power into the dbm variable;
  *	return 0 if successful
  *
@@ -1465,6 +1480,8 @@ struct cfg80211_gtk_rekey_data {
  *
  * @probe_client: probe an associated client, must return a cookie that it
  *	later passes to cfg80211_probe_status().
+ *
+ * @set_noack_map: Set the NoAck Map for the TIDs.
  */
 struct cfg80211_ops {
 	int	(*suspend)(struct wiphy *wiphy, struct cfg80211_wowlan *wow);
@@ -1658,6 +1675,10 @@ struct cfg80211_ops {
 	int	(*probe_client)(struct wiphy *wiphy, struct net_device *dev,
 				const u8 *peer, u64 *cookie);
 
+	int	(*set_noack_map)(struct wiphy *wiphy,
+				  struct net_device *dev,
+				  u16 noack_map);
+
 	struct ieee80211_channel *(*get_channel)(struct wiphy *wiphy);
 };
 
@@ -1683,7 +1704,9 @@ struct cfg80211_ops {
  *	regulatory domain no user regulatory domain can enable these channels
  *	at a later time. This can be used for devices which do not have
  *	calibration information guaranteed for frequencies or settings
- *	outside of its regulatory domain.
+ *	outside of its regulatory domain. If used in combination with
+ *	WIPHY_FLAG_CUSTOM_REGULATORY the inspected country IE power settings
+ *	will be followed.
  * @WIPHY_FLAG_DISABLE_BEACON_HINTS: enable this if your driver needs to ensure
  *	that passive scan flags and beaconing flags may not be lifted by
  *	cfg80211 due to regulatory beacon hints. For more information on beacon
@@ -3053,6 +3076,32 @@ void cfg80211_roamed(struct net_device *dev,
 		     const u8 *resp_ie, size_t resp_ie_len, gfp_t gfp);
 
 /**
+ * cfg80211_roamed_bss - notify cfg80211 of roaming
+ *
+ * @dev: network device
+ * @bss: entry of bss to which STA got roamed
+ * @req_ie: association request IEs (maybe be %NULL)
+ * @req_ie_len: association request IEs length
+ * @resp_ie: association response IEs (may be %NULL)
+ * @resp_ie_len: assoc response IEs length
+ * @gfp: allocation flags
+ *
+ * This is just a wrapper to notify cfg80211 of roaming event with driver
+ * passing bss to avoid a race in timeout of the bss entry. It should be
+ * called by the underlying driver whenever it roamed from one AP to another
+ * while connected. Drivers which have roaming implemented in firmware
+ * may use this function to avoid a race in bss entry timeout where the bss
+ * entry of the new AP is seen in the driver, but gets timed out by the time
+ * it is accessed in __cfg80211_roamed() due to delay in scheduling
+ * rdev->event_work. In case of any failures, the reference is released
+ * either in cfg80211_roamed_bss() or in __cfg80211_romed(), Otherwise,
+ * it will be released while diconneting from the current bss.
+ */
+void cfg80211_roamed_bss(struct net_device *dev, struct cfg80211_bss *bss,
+			 const u8 *req_ie, size_t req_ie_len,
+			 const u8 *resp_ie, size_t resp_ie_len, gfp_t gfp);
+
+/**
  * cfg80211_disconnected - notify cfg80211 that connection was dropped
  *
  * @dev: network device
@@ -3256,6 +3305,16 @@ void cfg80211_probe_status(struct net_device *dev, const u8 *addr,
 void cfg80211_report_obss_beacon(struct wiphy *wiphy,
 				 const u8 *frame, size_t len,
 				 int freq, gfp_t gfp);
+
+/*
+ * cfg80211_can_beacon_sec_chan - test if ht40 on extension channel can be used
+ * @wiphy: the wiphy
+ * @chan: main channel
+ * @channel_type: HT mode
+ */
+int cfg80211_can_beacon_sec_chan(struct wiphy *wiphy,
+				 struct ieee80211_channel *chan,
+				 enum nl80211_channel_type channel_type);
 
 /* Logging, debugging and troubleshooting/diagnostic helpers. */
 

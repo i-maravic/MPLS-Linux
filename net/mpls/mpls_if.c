@@ -54,7 +54,6 @@ static struct mpls_interface *mpls_create_if_info(void)
 
 	mif->labelspace = -1;
 	INIT_LIST_HEAD(&mif->list_out);
-	INIT_LIST_HEAD(&mif->list_in);
 	MPLS_EXIT;
 	return mif;
 }

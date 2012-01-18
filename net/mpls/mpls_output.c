@@ -26,6 +26,52 @@
 #include <net/mpls.h>
 #include <linux/ip.h>
 #include <net/dsfield.h>
+#include <net/xfrm.h>
+
+static inline int mpls_prepare_skb(
+		struct sk_buff *skb, 
+		unsigned int header_size,
+		struct net_device *dev)
+{
+	secpath_reset(skb);
+	skb->mac_header = skb->network_header;
+	skb_reset_network_header(skb);
+
+	if (!pskb_may_pull(skb, header_size))
+		return -EINVAL;
+
+	skb->pkt_type = PACKET_HOST;
+	__skb_tunnel_rx(skb, dev);
+	return NET_XMIT_SUCCESS;
+}
+
+static int mpls_dlv_ip(struct sk_buff *skb)
+{
+	if (ip_hdr(skb)->version == 4)
+		skb->protocol = htons(ETH_P_IP);
+	else if (ip_hdr(skb)->version == 6)
+		skb->protocol = htons(ETH_P_IPV6);
+	else {
+		return -EINVAL;
+	}
+
+	netif_receive_skb(skb);
+
+	MPLS_DEBUG("delivering\n");
+	MPLS_EXIT;
+	return NET_XMIT_SUCCESS;
+}
+
+static int mpls_dlv_recurse(struct sk_buff *skb)
+{
+	MPLSCB(skb)->recursion = 1;
+	MPLS_DEBUG("recursion\n");
+
+	netif_receive_skb(skb);
+
+	MPLS_EXIT;
+	return NET_XMIT_SUCCESS;
+}
 
 /**
  *	mpls_send - Send a labelled packet.
@@ -37,7 +83,6 @@
  *
  *	Returns: NET_XMIT_SUCCESS/NET_XMIT_DROP/NET_XMIT_CN
  **/
-
 static inline int mpls_send(struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
@@ -62,7 +107,7 @@ static inline int mpls_send(struct sk_buff *skb)
 	}
 
 	rcu_read_lock();
-	neigh = dst_get_neighbour(dst);
+	neigh = dst_get_neighbour_noref(dst);
 	if (neigh) {
 		int res = neigh_output(neigh, skb);
 		MPLS_EXIT;
@@ -129,9 +174,17 @@ static int mpls_finish_output(
 					break;
 				case MPLS_RESULT_DROP:
 					goto out_drop;
-				case MPLS_RESULT_FWD:
-				case MPLS_RESULT_RECURSE:
 				case MPLS_RESULT_DLV:
+					if (mpls_prepare_skb(skb, 
+						sizeof(struct iphdr), dev))
+						goto out_drop;			
+					goto dlv;
+				case MPLS_RESULT_RECURSE:
+					if (mpls_prepare_skb(skb, 
+						MPLS_HDR_LEN, dev))
+						goto out_drop;
+					goto recourse;
+				case MPLS_RESULT_FWD:
 					/* Invalid on OUTPUT */
 					WARN_ON_ONCE(1);
 					goto out_drop;
@@ -139,7 +192,20 @@ static int mpls_finish_output(
 		}
 	}
 	goto out_drop;
+dlv:
+	packet_length = skb->len;
+	ret = mpls_dlv_ip(skb);
+	if (ret)
+		goto out_drop;
 
+	goto stats;
+recourse:
+	packet_length = skb->len;
+	ret = mpls_dlv_recurse(skb);
+	if (ret)
+		goto out_drop;
+
+	goto stats;
 send:
 	if (skb->len > dev->mtu) {
 		int mtu = dst_mtu(&nhlfe->dst);
@@ -157,6 +223,7 @@ send:
 
 	/* Send to the hardware */
 	ret = mpls_send(skb);
+stats:
 	if (likely(ret == NET_XMIT_SUCCESS || ret == NET_XMIT_CN)) {
 		MPLS_INC_STATS(dev_net(dev), MPLS_MIB_OUTPACKETS);
 		MPLS_ADD_STATS(dev_net(dev), MPLS_MIB_OUTOCTETS,

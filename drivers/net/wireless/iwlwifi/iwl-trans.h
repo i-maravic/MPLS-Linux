@@ -178,20 +178,18 @@ struct iwl_trans_ops {
 
 	int (*tx)(struct iwl_trans *trans, struct sk_buff *skb,
 		struct iwl_device_cmd *dev_cmd, enum iwl_rxon_context_id ctx,
-		u8 sta_id);
-	void (*reclaim)(struct iwl_trans *trans, int sta_id, int tid,
+		u8 sta_id, u8 tid);
+	int (*reclaim)(struct iwl_trans *trans, int sta_id, int tid,
 			int txq_id, int ssn, u32 status,
 			struct sk_buff_head *skbs);
 
 	int (*tx_agg_disable)(struct iwl_trans *trans,
-			      enum iwl_rxon_context_id ctx, int sta_id,
-			      int tid);
+			      int sta_id, int tid);
 	int (*tx_agg_alloc)(struct iwl_trans *trans,
-			    enum iwl_rxon_context_id ctx, int sta_id, int tid,
-			    u16 *ssn);
+			    int sta_id, int tid);
 	void (*tx_agg_setup)(struct iwl_trans *trans,
 			     enum iwl_rxon_context_id ctx, int sta_id, int tid,
-			     int frame_limit);
+			     int frame_limit, u16 ssn);
 
 	void (*kick_nic)(struct iwl_trans *trans);
 
@@ -220,11 +218,12 @@ struct fw_img {
 	struct fw_desc data;	/* firmware data image */
 };
 
-enum iwl_ucode_type {
-	IWL_UCODE_NONE,
-	IWL_UCODE_REGULAR,
-	IWL_UCODE_INIT,
-	IWL_UCODE_WOWLAN,
+/* Opaque calibration results */
+struct iwl_calib_result {
+	struct list_head list;
+	size_t cmd_len;
+	struct iwl_calib_hdr hdr;
+	/* data follows */
 };
 
 /**
@@ -236,6 +235,8 @@ enum iwl_ucode_type {
  * @ucode_rt: run time ucode image
  * @ucode_init: init ucode image
  * @ucode_wowlan: wake on wireless ucode image (optional)
+ * @nvm_device_type: indicates OTP or eeprom
+ * @calib_results: list head for init calibration results
  */
 struct iwl_trans {
 	const struct iwl_trans_ops *ops;
@@ -249,6 +250,9 @@ struct iwl_trans {
 
 	/* eeprom related variables */
 	int    nvm_device_type;
+
+	/* init calibration results */
+	struct list_head calib_results;
 
 	/* pointer to trans specific struct */
 	/*Ensure that this pointer will always be aligned to sizeof pointer */
@@ -299,39 +303,38 @@ int iwl_trans_send_cmd_pdu(struct iwl_trans *trans, u8 id,
 
 static inline int iwl_trans_tx(struct iwl_trans *trans, struct sk_buff *skb,
 		struct iwl_device_cmd *dev_cmd, enum iwl_rxon_context_id ctx,
-		u8 sta_id)
+		u8 sta_id, u8 tid)
 {
-	return trans->ops->tx(trans, skb, dev_cmd, ctx, sta_id);
+	return trans->ops->tx(trans, skb, dev_cmd, ctx, sta_id, tid);
 }
 
-static inline void iwl_trans_reclaim(struct iwl_trans *trans, int sta_id,
+static inline int iwl_trans_reclaim(struct iwl_trans *trans, int sta_id,
 				 int tid, int txq_id, int ssn, u32 status,
 				 struct sk_buff_head *skbs)
 {
-	trans->ops->reclaim(trans, sta_id, tid, txq_id, ssn, status, skbs);
+	return trans->ops->reclaim(trans, sta_id, tid, txq_id, ssn,
+				   status, skbs);
 }
 
 static inline int iwl_trans_tx_agg_disable(struct iwl_trans *trans,
-					    enum iwl_rxon_context_id ctx,
 					    int sta_id, int tid)
 {
-	return trans->ops->tx_agg_disable(trans, ctx, sta_id, tid);
+	return trans->ops->tx_agg_disable(trans, sta_id, tid);
 }
 
 static inline int iwl_trans_tx_agg_alloc(struct iwl_trans *trans,
-					 enum iwl_rxon_context_id ctx,
-					 int sta_id, int tid, u16 *ssn)
+					 int sta_id, int tid)
 {
-	return trans->ops->tx_agg_alloc(trans, ctx, sta_id, tid, ssn);
+	return trans->ops->tx_agg_alloc(trans, sta_id, tid);
 }
 
 
 static inline void iwl_trans_tx_agg_setup(struct iwl_trans *trans,
 					   enum iwl_rxon_context_id ctx,
 					   int sta_id, int tid,
-					   int frame_limit)
+					   int frame_limit, u16 ssn)
 {
-	trans->ops->tx_agg_setup(trans, ctx, sta_id, tid, frame_limit);
+	trans->ops->tx_agg_setup(trans, ctx, sta_id, tid, frame_limit, ssn);
 }
 
 static inline void iwl_trans_kick_nic(struct iwl_trans *trans)
@@ -385,5 +388,10 @@ extern const struct iwl_trans_ops trans_ops_pcie;
 int iwl_alloc_fw_desc(struct iwl_bus *bus, struct fw_desc *desc,
 		      const void *data, size_t len);
 void iwl_dealloc_ucode(struct iwl_trans *trans);
+
+int iwl_send_calib_results(struct iwl_trans *trans);
+int iwl_calib_set(struct iwl_trans *trans,
+		  const struct iwl_calib_hdr *cmd, int len);
+void iwl_calib_free_results(struct iwl_trans *trans);
 
 #endif /* __iwl_trans_h__ */

@@ -88,9 +88,9 @@ static const struct neigh_ops dn_phase3_ops = {
 
 static u32 dn_neigh_hash(const void *pkey,
 			 const struct net_device *dev,
-			 __u32 hash_rnd)
+			 __u32 *hash_rnd)
 {
-	return jhash_2words(*(__u16 *)pkey, 0, hash_rnd);
+	return jhash_2words(*(__u16 *)pkey, 0, hash_rnd[0]);
 }
 
 struct neigh_table dn_neigh_table = {
@@ -202,7 +202,7 @@ static int dn_neigh_output_packet(struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct dn_route *rt = (struct dn_route *)dst;
-	struct neighbour *neigh = dst_get_neighbour(dst);
+	struct neighbour *neigh = dst_get_neighbour_noref(dst);
 	struct net_device *dev = neigh->dev;
 	char mac_addr[ETH_ALEN];
 

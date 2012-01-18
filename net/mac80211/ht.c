@@ -28,9 +28,9 @@ bool ieee80111_cfg_override_disables_ht40(struct ieee80211_sub_if_data *sdata)
 	return false;
 }
 
-void __check_htcap_disable(struct ieee80211_sub_if_data *sdata,
-			   struct ieee80211_sta_ht_cap *ht_cap,
-			   u16 flag)
+static void __check_htcap_disable(struct ieee80211_sub_if_data *sdata,
+				  struct ieee80211_sta_ht_cap *ht_cap,
+				  u16 flag)
 {
 	__le16 le_flag = cpu_to_le16(flag);
 	if (sdata->u.mgd.ht_capa_mask.cap_info & le_flag) {
@@ -47,7 +47,9 @@ void ieee80211_apply_htcap_overrides(struct ieee80211_sub_if_data *sdata,
 	int i;
 
 	if (sdata->vif.type != NL80211_IFTYPE_STATION) {
-		WARN_ON_ONCE(sdata->vif.type != NL80211_IFTYPE_STATION);
+		/* AP interfaces call this code when adding new stations,
+		 * so just silently ignore non station interfaces.
+		 */
 		return;
 	}
 
@@ -282,6 +284,8 @@ void ieee80211_send_delba(struct ieee80211_sub_if_data *sdata,
 		memcpy(mgmt->bssid, sdata->vif.addr, ETH_ALEN);
 	else if (sdata->vif.type == NL80211_IFTYPE_STATION)
 		memcpy(mgmt->bssid, sdata->u.mgd.bssid, ETH_ALEN);
+	else if (sdata->vif.type == NL80211_IFTYPE_ADHOC)
+		memcpy(mgmt->bssid, sdata->u.ibss.bssid, ETH_ALEN);
 
 	mgmt->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT |
 					  IEEE80211_STYPE_ACTION);
@@ -296,7 +300,7 @@ void ieee80211_send_delba(struct ieee80211_sub_if_data *sdata,
 	mgmt->u.action.u.delba.params = cpu_to_le16(params);
 	mgmt->u.action.u.delba.reason_code = cpu_to_le16(reason_code);
 
-	ieee80211_tx_skb(sdata, skb);
+	ieee80211_tx_skb_tid(sdata, skb, tid);
 }
 
 void ieee80211_process_delba(struct ieee80211_sub_if_data *sdata,

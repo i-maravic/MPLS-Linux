@@ -27,6 +27,7 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/export.h>
 
 #include <net/ipv6.h>
 #include <net/ndisc.h>
@@ -667,16 +668,16 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 				break;
 			}
 
-			if (iter->rt6i_dev == rt->rt6i_dev &&
+			if (iter->dst.dev == rt->dst.dev &&
 			    iter->rt6i_idev == rt->rt6i_idev &&
 			    ipv6_addr_equal(&iter->rt6i_gateway,
 					    &rt->rt6i_gateway)) {
 				if (!(iter->rt6i_flags & RTF_EXPIRES))
 					return -EEXIST;
-				iter->rt6i_expires = rt->rt6i_expires;
+				iter->dst.expires = rt->dst.expires;
 				if (!(rt->rt6i_flags & RTF_EXPIRES)) {
 					iter->rt6i_flags &= ~RTF_EXPIRES;
-					iter->rt6i_expires = 0;
+					iter->dst.expires = 0;
 				}
 				return -EEXIST;
 			}
@@ -1462,6 +1463,26 @@ static void fib6_clean_tree(struct net *net, struct fib6_node *root,
 	fib6_walk(&c.w);
 }
 
+void fib6_clean_all_ro(struct net *net, int (*func)(struct rt6_info *, void *arg),
+		    int prune, void *arg)
+{
+	struct fib6_table *table;
+	struct hlist_node *node;
+	struct hlist_head *head;
+	unsigned int h;
+
+	rcu_read_lock();
+	for (h = 0; h < FIB6_TABLE_HASHSZ; h++) {
+		head = &net->ipv6.fib_table_hash[h];
+		hlist_for_each_entry_rcu(table, node, head, tb6_hlist) {
+			read_lock_bh(&table->tb6_lock);
+			fib6_clean_tree(net, &table->tb6_root,
+					func, prune, arg);
+			read_unlock_bh(&table->tb6_lock);
+		}
+	}
+	rcu_read_unlock();
+}
 void fib6_clean_all(struct net *net, int (*func)(struct rt6_info *, void *arg),
 		    int prune, void *arg)
 {
@@ -1521,8 +1542,8 @@ static int fib6_age(struct rt6_info *rt, void *arg)
 	 *	only if they are not in use now.
 	 */
 
-	if (rt->rt6i_flags & RTF_EXPIRES && rt->rt6i_expires) {
-		if (time_after(now, rt->rt6i_expires)) {
+	if (rt->rt6i_flags & RTF_EXPIRES && rt->dst.expires) {
+		if (time_after(now, rt->dst.expires)) {
 			RT6_TRACE("expiring %p\n", rt);
 			return -1;
 		}
@@ -1533,7 +1554,7 @@ static int fib6_age(struct rt6_info *rt, void *arg)
 			RT6_TRACE("aging clone %p\n", rt);
 			return -1;
 		} else if ((rt->rt6i_flags & RTF_GATEWAY) &&
-			   (!(dst_get_neighbour_raw(&rt->dst)->flags & NTF_ROUTER))) {
+			   (!(dst_get_neighbour_noref_raw(&rt->dst)->flags & NTF_ROUTER))) {
 			RT6_TRACE("purging route %p via non-router but gateway\n",
 				  rt);
 			return -1;

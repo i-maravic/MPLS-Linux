@@ -18,6 +18,7 @@
 #include <linux/ctype.h>
 #include <linux/notifier.h>
 #include <linux/netdevice.h>
+#include <linux/if_vlan.h>
 #include <linux/if_arp.h>
 #include <linux/socket.h>
 #include <linux/etherdevice.h>
@@ -587,6 +588,13 @@ static int team_port_add(struct team *team, struct net_device *port_dev)
 		goto err_dev_open;
 	}
 
+	err = vlan_vids_add_by_dev(port_dev, dev);
+	if (err) {
+		netdev_err(dev, "Failed to add vlan ids to device %s\n",
+				portname);
+		goto err_vids_add;
+	}
+
 	err = netdev_set_master(port_dev, dev);
 	if (err) {
 		netdev_err(dev, "Device %s failed to set master\n", portname);
@@ -614,6 +622,9 @@ err_handler_register:
 	netdev_set_master(port_dev, NULL);
 
 err_set_master:
+	vlan_vids_del_by_dev(port_dev, dev);
+
+err_vids_add:
 	dev_close(port_dev);
 
 err_dev_open:
@@ -647,6 +658,7 @@ static int team_port_del(struct team *team, struct net_device *port_dev)
 	team_adjust_ops(team);
 	netdev_rx_handler_unregister(port_dev);
 	netdev_set_master(port_dev, NULL);
+	vlan_vids_del_by_dev(port_dev, dev);
 	dev_close(port_dev);
 	team_port_leave(team, port);
 	team_port_set_orig_mac(port);
@@ -902,34 +914,45 @@ team_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 	return stats;
 }
 
-static void team_vlan_rx_add_vid(struct net_device *dev, uint16_t vid)
+static int team_vlan_rx_add_vid(struct net_device *dev, uint16_t vid)
 {
 	struct team *team = netdev_priv(dev);
 	struct team_port *port;
+	int err;
 
-	rcu_read_lock();
-	list_for_each_entry_rcu(port, &team->port_list, list) {
-		const struct net_device_ops *ops = port->dev->netdev_ops;
-
-		if (ops->ndo_vlan_rx_add_vid)
-			ops->ndo_vlan_rx_add_vid(port->dev, vid);
+	/*
+	 * Alhough this is reader, it's guarded by team lock. It's not possible
+	 * to traverse list in reverse under rcu_read_lock
+	 */
+	mutex_lock(&team->lock);
+	list_for_each_entry(port, &team->port_list, list) {
+		err = vlan_vid_add(port->dev, vid);
+		if (err)
+			goto unwind;
 	}
-	rcu_read_unlock();
+	mutex_unlock(&team->lock);
+
+	return 0;
+
+unwind:
+	list_for_each_entry_continue_reverse(port, &team->port_list, list)
+		vlan_vid_del(port->dev, vid);
+	mutex_unlock(&team->lock);
+
+	return err;
 }
 
-static void team_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid)
+static int team_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid)
 {
 	struct team *team = netdev_priv(dev);
 	struct team_port *port;
 
 	rcu_read_lock();
-	list_for_each_entry_rcu(port, &team->port_list, list) {
-		const struct net_device_ops *ops = port->dev->netdev_ops;
-
-		if (ops->ndo_vlan_rx_kill_vid)
-			ops->ndo_vlan_rx_kill_vid(port->dev, vid);
-	}
+	list_for_each_entry_rcu(port, &team->port_list, list)
+		vlan_vid_del(port->dev, vid);
 	rcu_read_unlock();
+
+	return 0;
 }
 
 static int team_add_slave(struct net_device *dev, struct net_device *port_dev)

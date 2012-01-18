@@ -1,4 +1,5 @@
 #include <net/shim.h>
+#include <linux/export.h>
 
 /**
  *	mpls_uc_shim - "SPECIAL" next hop Management for MPLS UC traffic.

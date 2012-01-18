@@ -322,11 +322,18 @@ out_entries:
 	goto out;
 }
 
+static void neigh_get_hash_rnd(u32 *x)
+{
+	get_random_bytes(x, sizeof(*x));
+	*x |= 1;
+}
+
 static struct neigh_hash_table *neigh_hash_alloc(unsigned int shift)
 {
 	size_t size = (1 << shift) * sizeof(struct neighbour *);
 	struct neigh_hash_table *ret;
 	struct neighbour __rcu **buckets;
+	int i;
 
 	ret = kmalloc(sizeof(*ret), GFP_ATOMIC);
 	if (!ret)
@@ -343,8 +350,8 @@ static struct neigh_hash_table *neigh_hash_alloc(unsigned int shift)
 	}
 	ret->hash_buckets = buckets;
 	ret->hash_shift = shift;
-	get_random_bytes(&ret->hash_rnd, sizeof(ret->hash_rnd));
-	ret->hash_rnd |= 1;
+	for (i = 0; i < NEIGH_NUM_HASH_RND; i++)
+		neigh_get_hash_rnd(&ret->hash_rnd[i]);
 	return ret;
 }
 
@@ -1190,7 +1197,7 @@ int neigh_update(struct neighbour *neigh, const u8 *lladdr, u8 new,
 
 			rcu_read_lock();
 			/* On shaper/eql skb->dst->neighbour != neigh :( */
-			if (dst && (n2 = dst_get_neighbour(dst)) != NULL)
+			if (dst && (n2 = dst_get_neighbour_noref(dst)) != NULL)
 				n1 = n2;
 			n1->output(n1, skb);
 			rcu_read_unlock();
@@ -1825,7 +1832,7 @@ static int neightbl_fill_info(struct sk_buff *skb, struct neigh_table *tbl,
 
 		rcu_read_lock_bh();
 		nht = rcu_dereference_bh(tbl->nht);
-		ndc.ndtc_hash_rnd = nht->hash_rnd;
+		ndc.ndtc_hash_rnd = nht->hash_rnd[0];
 		ndc.ndtc_hash_mask = ((1 << nht->hash_shift) - 1);
 		rcu_read_unlock_bh();
 

@@ -45,7 +45,7 @@
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 
-static int enable_le;
+static bool enable_le;
 
 /* Handle HCI Event packets */
 
@@ -55,8 +55,12 @@ static void hci_cc_inquiry_cancel(struct hci_dev *hdev, struct sk_buff *skb)
 
 	BT_DBG("%s status 0x%x", hdev->name, status);
 
-	if (status)
+	if (status) {
+		hci_dev_lock(hdev);
+		mgmt_stop_discovery_failed(hdev, status);
+		hci_dev_unlock(hdev);
 		return;
+	}
 
 	clear_bit(HCI_INQUIRY, &hdev->flags);
 
@@ -190,6 +194,8 @@ static void hci_cc_reset(struct hci_dev *hdev, struct sk_buff *skb)
 	clear_bit(HCI_RESET, &hdev->flags);
 
 	hci_req_complete(hdev, HCI_OP_RESET, status);
+
+	hdev->dev_flags = 0;
 }
 
 static void hci_cc_write_local_name(struct hci_dev *hdev, struct sk_buff *skb)
@@ -372,11 +378,8 @@ static void hci_cc_read_voice_setting(struct hci_dev *hdev, struct sk_buff *skb)
 
 	BT_DBG("%s voice setting 0x%04x", hdev->name, setting);
 
-	if (hdev->notify) {
-		tasklet_disable(&hdev->tx_task);
+	if (hdev->notify)
 		hdev->notify(hdev, HCI_NOTIFY_VOICE_SETTING);
-		tasklet_enable(&hdev->tx_task);
-	}
 }
 
 static void hci_cc_write_voice_setting(struct hci_dev *hdev, struct sk_buff *skb)
@@ -403,11 +406,8 @@ static void hci_cc_write_voice_setting(struct hci_dev *hdev, struct sk_buff *skb
 
 	BT_DBG("%s voice setting 0x%04x", hdev->name, setting);
 
-	if (hdev->notify) {
-		tasklet_disable(&hdev->tx_task);
+	if (hdev->notify)
 		hdev->notify(hdev, HCI_NOTIFY_VOICE_SETTING);
-		tasklet_enable(&hdev->tx_task);
-	}
 }
 
 static void hci_cc_host_buffer_size(struct hci_dev *hdev, struct sk_buff *skb)
@@ -494,7 +494,7 @@ static void hci_setup_event_mask(struct hci_dev *hdev)
 
 	/* CSR 1.1 dongles does not accept any bitfield so don't try to set
 	 * any event mask for pre 1.2 devices */
-	if (hdev->lmp_ver <= 1)
+	if (hdev->hci_ver < BLUETOOTH_VER_1_2)
 		return;
 
 	events[4] |= 0x01; /* Flow Specification Complete */
@@ -556,9 +556,12 @@ static void hci_set_le_support(struct hci_dev *hdev)
 
 static void hci_setup(struct hci_dev *hdev)
 {
+	if (hdev->dev_type != HCI_BREDR)
+		return;
+
 	hci_setup_event_mask(hdev);
 
-	if (hdev->lmp_ver > 1)
+	if (hdev->hci_ver > BLUETOOTH_VER_1_1)
 		hci_send_cmd(hdev, HCI_OP_READ_LOCAL_COMMANDS, 0, NULL);
 
 	if (hdev->features[6] & LMP_SIMPLE_PAIR) {
@@ -713,6 +716,21 @@ static void hci_cc_read_local_ext_features(struct hci_dev *hdev,
 	hci_req_complete(hdev, HCI_OP_READ_LOCAL_EXT_FEATURES, rp->status);
 }
 
+static void hci_cc_read_flow_control_mode(struct hci_dev *hdev,
+						struct sk_buff *skb)
+{
+	struct hci_rp_read_flow_control_mode *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	if (rp->status)
+		return;
+
+	hdev->flow_ctl_mode = rp->mode;
+
+	hci_req_complete(hdev, HCI_OP_READ_FLOW_CONTROL_MODE, rp->status);
+}
+
 static void hci_cc_read_buffer_size(struct hci_dev *hdev, struct sk_buff *skb)
 {
 	struct hci_rp_read_buffer_size *rp = (void *) skb->data;
@@ -750,6 +768,28 @@ static void hci_cc_read_bd_addr(struct hci_dev *hdev, struct sk_buff *skb)
 		bacpy(&hdev->bdaddr, &rp->bdaddr);
 
 	hci_req_complete(hdev, HCI_OP_READ_BD_ADDR, rp->status);
+}
+
+static void hci_cc_read_data_block_size(struct hci_dev *hdev,
+							struct sk_buff *skb)
+{
+	struct hci_rp_read_data_block_size *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	if (rp->status)
+		return;
+
+	hdev->block_mtu = __le16_to_cpu(rp->max_acl_len);
+	hdev->block_len = __le16_to_cpu(rp->block_len);
+	hdev->num_blocks = __le16_to_cpu(rp->num_blocks);
+
+	hdev->block_cnt = hdev->num_blocks;
+
+	BT_DBG("%s blk mtu %d cnt %d len %d", hdev->name, hdev->block_mtu,
+					hdev->block_cnt, hdev->block_len);
+
+	hci_req_complete(hdev, HCI_OP_READ_DATA_BLOCK_SIZE, rp->status);
 }
 
 static void hci_cc_write_ca_timeout(struct hci_dev *hdev, struct sk_buff *skb)
@@ -927,6 +967,37 @@ static void hci_cc_user_confirm_neg_reply(struct hci_dev *hdev,
 	hci_dev_unlock(hdev);
 }
 
+static void hci_cc_user_passkey_reply(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	struct hci_rp_user_confirm_reply *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	hci_dev_lock(hdev);
+
+	if (test_bit(HCI_MGMT, &hdev->flags))
+		mgmt_user_passkey_reply_complete(hdev, &rp->bdaddr,
+								rp->status);
+
+	hci_dev_unlock(hdev);
+}
+
+static void hci_cc_user_passkey_neg_reply(struct hci_dev *hdev,
+							struct sk_buff *skb)
+{
+	struct hci_rp_user_confirm_reply *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	hci_dev_lock(hdev);
+
+	if (test_bit(HCI_MGMT, &hdev->flags))
+		mgmt_user_passkey_neg_reply_complete(hdev, &rp->bdaddr,
+								rp->status);
+
+	hci_dev_unlock(hdev);
+}
+
 static void hci_cc_read_local_oob_data_reply(struct hci_dev *hdev,
 							struct sk_buff *skb)
 {
@@ -938,6 +1009,13 @@ static void hci_cc_read_local_oob_data_reply(struct hci_dev *hdev,
 	mgmt_read_local_oob_data_reply_complete(hdev, rp->hash,
 						rp->randomizer, rp->status);
 	hci_dev_unlock(hdev);
+}
+
+static void hci_cc_le_set_scan_param(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	__u8 status = *((__u8 *) skb->data);
+
+	BT_DBG("%s status 0x%x", hdev->name, status);
 }
 
 static void hci_cc_le_set_scan_enable(struct hci_dev *hdev,
@@ -955,14 +1033,28 @@ static void hci_cc_le_set_scan_enable(struct hci_dev *hdev,
 	if (!cp)
 		return;
 
-	if (cp->enable == 0x01) {
-		del_timer(&hdev->adv_timer);
+	switch (cp->enable) {
+	case LE_SCANNING_ENABLED:
+		set_bit(HCI_LE_SCAN, &hdev->dev_flags);
+
+		cancel_delayed_work_sync(&hdev->adv_work);
 
 		hci_dev_lock(hdev);
 		hci_adv_entries_clear(hdev);
 		hci_dev_unlock(hdev);
-	} else if (cp->enable == 0x00) {
-		mod_timer(&hdev->adv_timer, jiffies + ADV_CLEAR_TIMEOUT);
+		break;
+
+	case LE_SCANNING_DISABLED:
+		clear_bit(HCI_LE_SCAN, &hdev->dev_flags);
+
+		cancel_delayed_work_sync(&hdev->adv_work);
+		queue_delayed_work(hdev->workqueue, &hdev->adv_work,
+						 jiffies + ADV_CLEAR_TIMEOUT);
+		break;
+
+	default:
+		BT_ERR("Used reserved LE_Scan_Enable param %d", cp->enable);
+		break;
 	}
 }
 
@@ -1014,7 +1106,7 @@ static inline void hci_cs_inquiry(struct hci_dev *hdev, __u8 status)
 		hci_conn_check_pending(hdev);
 		hci_dev_lock(hdev);
 		if (test_bit(HCI_MGMT, &hdev->flags))
-			mgmt_inquiry_failed(hdev, status);
+			mgmt_start_discovery_failed(hdev, status);
 		hci_dev_unlock(hdev);
 		return;
 	}
@@ -1437,7 +1529,7 @@ static inline void hci_inquiry_result_evt(struct hci_dev *hdev, struct sk_buff *
 		data.rssi		= 0x00;
 		data.ssp_mode		= 0x00;
 		hci_inquiry_cache_update(hdev, &data);
-		mgmt_device_found(hdev, &info->bdaddr, ACL_LINK,
+		mgmt_device_found(hdev, &info->bdaddr, ACL_LINK, 0x00,
 						info->dev_class, 0, NULL);
 	}
 
@@ -1472,7 +1564,8 @@ static inline void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 			conn->state = BT_CONFIG;
 			hci_conn_hold(conn);
 			conn->disc_timeout = HCI_DISCONN_TIMEOUT;
-			mgmt_connected(hdev, &ev->bdaddr, conn->type);
+			mgmt_connected(hdev, &ev->bdaddr, conn->type,
+							conn->dst_type);
 		} else
 			conn->state = BT_CONNECTED;
 
@@ -1494,7 +1587,7 @@ static inline void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 		}
 
 		/* Set packet type for incoming connection */
-		if (!conn->out && hdev->hci_ver < 3) {
+		if (!conn->out && hdev->hci_ver < BLUETOOTH_VER_2_0) {
 			struct hci_cp_change_conn_ptype cp;
 			cp.handle = ev->handle;
 			cp.pkt_type = cpu_to_le16(conn->pkt_type);
@@ -1505,7 +1598,7 @@ static inline void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 		conn->state = BT_CLOSED;
 		if (conn->type == ACL_LINK)
 			mgmt_connect_failed(hdev, &ev->bdaddr, conn->type,
-								ev->status);
+						conn->dst_type, ev->status);
 	}
 
 	if (conn->type == ACL_LINK)
@@ -1604,26 +1697,27 @@ static inline void hci_disconn_complete_evt(struct hci_dev *hdev, struct sk_buff
 
 	BT_DBG("%s status %d", hdev->name, ev->status);
 
-	if (ev->status) {
-		hci_dev_lock(hdev);
-		mgmt_disconnect_failed(hdev);
-		hci_dev_unlock(hdev);
-		return;
-	}
-
 	hci_dev_lock(hdev);
 
 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(ev->handle));
 	if (!conn)
 		goto unlock;
 
-	conn->state = BT_CLOSED;
+	if (ev->status == 0)
+		conn->state = BT_CLOSED;
 
-	if (conn->type == ACL_LINK || conn->type == LE_LINK)
-		mgmt_disconnected(hdev, &conn->dst, conn->type);
+	if (conn->type == ACL_LINK || conn->type == LE_LINK) {
+		if (ev->status != 0)
+			mgmt_disconnect_failed(hdev, &conn->dst, ev->status);
+		else
+			mgmt_disconnected(hdev, &conn->dst, conn->type,
+							conn->dst_type);
+	}
 
-	hci_proto_disconn_cfm(conn, ev->reason);
-	hci_conn_del(conn);
+	if (ev->status == 0) {
+		hci_proto_disconn_cfm(conn, ev->reason);
+		hci_conn_del(conn);
+	}
 
 unlock:
 	hci_dev_unlock(hdev);
@@ -1957,8 +2051,16 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 		hci_cc_read_bd_addr(hdev, skb);
 		break;
 
+	case HCI_OP_READ_DATA_BLOCK_SIZE:
+		hci_cc_read_data_block_size(hdev, skb);
+		break;
+
 	case HCI_OP_WRITE_CA_TIMEOUT:
 		hci_cc_write_ca_timeout(hdev, skb);
+		break;
+
+	case HCI_OP_READ_FLOW_CONTROL_MODE:
+		hci_cc_read_flow_control_mode(hdev, skb);
 		break;
 
 	case HCI_OP_READ_LOCAL_AMP_INFO:
@@ -2009,6 +2111,17 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 		hci_cc_user_confirm_neg_reply(hdev, skb);
 		break;
 
+	case HCI_OP_USER_PASSKEY_REPLY:
+		hci_cc_user_passkey_reply(hdev, skb);
+		break;
+
+	case HCI_OP_USER_PASSKEY_NEG_REPLY:
+		hci_cc_user_passkey_neg_reply(hdev, skb);
+
+	case HCI_OP_LE_SET_SCAN_PARAM:
+		hci_cc_le_set_scan_param(hdev, skb);
+		break;
+
 	case HCI_OP_LE_SET_SCAN_ENABLE:
 		hci_cc_le_set_scan_enable(hdev, skb);
 		break;
@@ -2036,7 +2149,7 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 	if (ev->ncmd) {
 		atomic_set(&hdev->cmd_cnt, 1);
 		if (!skb_queue_empty(&hdev->cmd_q))
-			tasklet_schedule(&hdev->cmd_task);
+			queue_work(hdev->workqueue, &hdev->cmd_work);
 	}
 }
 
@@ -2096,7 +2209,7 @@ static inline void hci_cmd_status_evt(struct hci_dev *hdev, struct sk_buff *skb)
 
 	case HCI_OP_DISCONNECT:
 		if (ev->status != 0)
-			mgmt_disconnect_failed(hdev);
+			mgmt_disconnect_failed(hdev, NULL, ev->status);
 		break;
 
 	case HCI_OP_LE_CREATE_CONN:
@@ -2118,7 +2231,7 @@ static inline void hci_cmd_status_evt(struct hci_dev *hdev, struct sk_buff *skb)
 	if (ev->ncmd && !test_bit(HCI_RESET, &hdev->flags)) {
 		atomic_set(&hdev->cmd_cnt, 1);
 		if (!skb_queue_empty(&hdev->cmd_q))
-			tasklet_schedule(&hdev->cmd_task);
+			queue_work(hdev->workqueue, &hdev->cmd_work);
 	}
 }
 
@@ -2151,56 +2264,68 @@ static inline void hci_role_change_evt(struct hci_dev *hdev, struct sk_buff *skb
 static inline void hci_num_comp_pkts_evt(struct hci_dev *hdev, struct sk_buff *skb)
 {
 	struct hci_ev_num_comp_pkts *ev = (void *) skb->data;
-	__le16 *ptr;
 	int i;
 
 	skb_pull(skb, sizeof(*ev));
 
 	BT_DBG("%s num_hndl %d", hdev->name, ev->num_hndl);
 
+	if (hdev->flow_ctl_mode != HCI_FLOW_CTL_MODE_PACKET_BASED) {
+		BT_ERR("Wrong event for mode %d", hdev->flow_ctl_mode);
+		return;
+	}
+
 	if (skb->len < ev->num_hndl * 4) {
 		BT_DBG("%s bad parameters", hdev->name);
 		return;
 	}
 
-	tasklet_disable(&hdev->tx_task);
-
-	for (i = 0, ptr = (__le16 *) skb->data; i < ev->num_hndl; i++) {
+	for (i = 0; i < ev->num_hndl; i++) {
+		struct hci_comp_pkts_info *info = &ev->handles[i];
 		struct hci_conn *conn;
 		__u16  handle, count;
 
-		handle = get_unaligned_le16(ptr++);
-		count  = get_unaligned_le16(ptr++);
+		handle = __le16_to_cpu(info->handle);
+		count  = __le16_to_cpu(info->count);
 
 		conn = hci_conn_hash_lookup_handle(hdev, handle);
-		if (conn) {
-			conn->sent -= count;
+		if (!conn)
+			continue;
 
-			if (conn->type == ACL_LINK) {
+		conn->sent -= count;
+
+		switch (conn->type) {
+		case ACL_LINK:
+			hdev->acl_cnt += count;
+			if (hdev->acl_cnt > hdev->acl_pkts)
+				hdev->acl_cnt = hdev->acl_pkts;
+			break;
+
+		case LE_LINK:
+			if (hdev->le_pkts) {
+				hdev->le_cnt += count;
+				if (hdev->le_cnt > hdev->le_pkts)
+					hdev->le_cnt = hdev->le_pkts;
+			} else {
 				hdev->acl_cnt += count;
 				if (hdev->acl_cnt > hdev->acl_pkts)
 					hdev->acl_cnt = hdev->acl_pkts;
-			} else if (conn->type == LE_LINK) {
-				if (hdev->le_pkts) {
-					hdev->le_cnt += count;
-					if (hdev->le_cnt > hdev->le_pkts)
-						hdev->le_cnt = hdev->le_pkts;
-				} else {
-					hdev->acl_cnt += count;
-					if (hdev->acl_cnt > hdev->acl_pkts)
-						hdev->acl_cnt = hdev->acl_pkts;
-				}
-			} else {
-				hdev->sco_cnt += count;
-				if (hdev->sco_cnt > hdev->sco_pkts)
-					hdev->sco_cnt = hdev->sco_pkts;
 			}
+			break;
+
+		case SCO_LINK:
+			hdev->sco_cnt += count;
+			if (hdev->sco_cnt > hdev->sco_pkts)
+				hdev->sco_cnt = hdev->sco_pkts;
+			break;
+
+		default:
+			BT_ERR("Unknown type %d conn %p", conn->type, conn);
+			break;
 		}
 	}
 
-	tasklet_schedule(&hdev->tx_task);
-
-	tasklet_enable(&hdev->tx_task);
+	queue_work(hdev->workqueue, &hdev->tx_work);
 }
 
 static inline void hci_mode_change_evt(struct hci_dev *hdev, struct sk_buff *skb)
@@ -2444,7 +2569,7 @@ static inline void hci_inquiry_result_with_rssi_evt(struct hci_dev *hdev, struct
 			data.rssi		= info->rssi;
 			data.ssp_mode		= 0x00;
 			hci_inquiry_cache_update(hdev, &data);
-			mgmt_device_found(hdev, &info->bdaddr, ACL_LINK,
+			mgmt_device_found(hdev, &info->bdaddr, ACL_LINK, 0x00,
 						info->dev_class, info->rssi,
 						NULL);
 		}
@@ -2461,7 +2586,7 @@ static inline void hci_inquiry_result_with_rssi_evt(struct hci_dev *hdev, struct
 			data.rssi		= info->rssi;
 			data.ssp_mode		= 0x00;
 			hci_inquiry_cache_update(hdev, &data);
-			mgmt_device_found(hdev, &info->bdaddr, ACL_LINK,
+			mgmt_device_found(hdev, &info->bdaddr, ACL_LINK, 0x00,
 						info->dev_class, info->rssi,
 						NULL);
 		}
@@ -2604,7 +2729,7 @@ static inline void hci_extended_inquiry_result_evt(struct hci_dev *hdev, struct 
 		data.rssi		= info->rssi;
 		data.ssp_mode		= 0x01;
 		hci_inquiry_cache_update(hdev, &data);
-		mgmt_device_found(hdev, &info->bdaddr, ACL_LINK,
+		mgmt_device_found(hdev, &info->bdaddr, ACL_LINK, 0x00,
 				info->dev_class, info->rssi, info->data);
 	}
 
@@ -2768,6 +2893,21 @@ unlock:
 	hci_dev_unlock(hdev);
 }
 
+static inline void hci_user_passkey_request_evt(struct hci_dev *hdev,
+							struct sk_buff *skb)
+{
+	struct hci_ev_user_passkey_req *ev = (void *) skb->data;
+
+	BT_DBG("%s", hdev->name);
+
+	hci_dev_lock(hdev);
+
+	if (test_bit(HCI_MGMT, &hdev->flags))
+		mgmt_user_passkey_request(hdev, &ev->bdaddr);
+
+	hci_dev_unlock(hdev);
+}
+
 static inline void hci_simple_pair_complete_evt(struct hci_dev *hdev, struct sk_buff *skb)
 {
 	struct hci_ev_simple_pair_complete *ev = (void *) skb->data;
@@ -2868,14 +3008,15 @@ static inline void hci_le_conn_complete_evt(struct hci_dev *hdev, struct sk_buff
 	}
 
 	if (ev->status) {
-		mgmt_connect_failed(hdev, &ev->bdaddr, conn->type, ev->status);
+		mgmt_connect_failed(hdev, &ev->bdaddr, conn->type,
+						conn->dst_type, ev->status);
 		hci_proto_connect_cfm(conn, ev->status);
 		conn->state = BT_CLOSED;
 		hci_conn_del(conn);
 		goto unlock;
 	}
 
-	mgmt_connected(hdev, &ev->bdaddr, conn->type);
+	mgmt_connected(hdev, &ev->bdaddr, conn->type, conn->dst_type);
 
 	conn->sec_level = BT_SECURITY_LOW;
 	conn->handle = __le16_to_cpu(ev->handle);
@@ -3104,6 +3245,10 @@ void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb)
 
 	case HCI_EV_USER_CONFIRM_REQUEST:
 		hci_user_confirm_request_evt(hdev, skb);
+		break;
+
+	case HCI_EV_USER_PASSKEY_REQUEST:
+		hci_user_passkey_request_evt(hdev, skb);
 		break;
 
 	case HCI_EV_SIMPLE_PAIR_COMPLETE:

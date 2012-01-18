@@ -32,6 +32,7 @@
 #include <linux/init.h>
 #include <linux/sched.h>
 
+#include "iwl-wifi.h"
 #include "iwl-dev.h"
 #include "iwl-core.h"
 #include "iwl-io.h"
@@ -92,11 +93,11 @@ void iwlagn_temperature(struct iwl_priv *priv)
 	iwl_tt_handler(priv);
 }
 
-u16 iwlagn_eeprom_calib_version(struct iwl_priv *priv)
+u16 iwl_eeprom_calib_version(struct iwl_shared *shrd)
 {
 	struct iwl_eeprom_calib_hdr *hdr;
 
-	hdr = (struct iwl_eeprom_calib_hdr *)iwl_eeprom_query_addr(priv,
+	hdr = (struct iwl_eeprom_calib_hdr *)iwl_eeprom_query_addr(shrd,
 							EEPROM_CALIB_ALL);
 	return hdr->version;
 
@@ -105,7 +106,7 @@ u16 iwlagn_eeprom_calib_version(struct iwl_priv *priv)
 /*
  * EEPROM
  */
-static u32 eeprom_indirect_address(const struct iwl_priv *priv, u32 address)
+static u32 eeprom_indirect_address(const struct iwl_shared *shrd, u32 address)
 {
 	u16 offset = 0;
 
@@ -114,31 +115,31 @@ static u32 eeprom_indirect_address(const struct iwl_priv *priv, u32 address)
 
 	switch (address & INDIRECT_TYPE_MSK) {
 	case INDIRECT_HOST:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_HOST);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_HOST);
 		break;
 	case INDIRECT_GENERAL:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_GENERAL);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_GENERAL);
 		break;
 	case INDIRECT_REGULATORY:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_REGULATORY);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_REGULATORY);
 		break;
 	case INDIRECT_TXP_LIMIT:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_TXP_LIMIT);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_TXP_LIMIT);
 		break;
 	case INDIRECT_TXP_LIMIT_SIZE:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_TXP_LIMIT_SIZE);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_TXP_LIMIT_SIZE);
 		break;
 	case INDIRECT_CALIBRATION:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_CALIBRATION);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_CALIBRATION);
 		break;
 	case INDIRECT_PROCESS_ADJST:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_PROCESS_ADJST);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_PROCESS_ADJST);
 		break;
 	case INDIRECT_OTHERS:
-		offset = iwl_eeprom_query16(priv, EEPROM_LINK_OTHERS);
+		offset = iwl_eeprom_query16(shrd, EEPROM_LINK_OTHERS);
 		break;
 	default:
-		IWL_ERR(priv, "illegal indirect type: 0x%X\n",
+		IWL_ERR(shrd->trans, "illegal indirect type: 0x%X\n",
 		address & INDIRECT_TYPE_MSK);
 		break;
 	}
@@ -147,11 +148,11 @@ static u32 eeprom_indirect_address(const struct iwl_priv *priv, u32 address)
 	return (address & ADDRESS_MSK) + (offset << 1);
 }
 
-const u8 *iwl_eeprom_query_addr(const struct iwl_priv *priv, size_t offset)
+const u8 *iwl_eeprom_query_addr(const struct iwl_shared *shrd, size_t offset)
 {
-	u32 address = eeprom_indirect_address(priv, offset);
-	BUG_ON(address >= priv->cfg->base_params->eeprom_size);
-	return &priv->eeprom[address];
+	u32 address = eeprom_indirect_address(shrd, offset);
+	BUG_ON(address >= shrd->cfg->base_params->eeprom_size);
+	return &shrd->eeprom[address];
 }
 
 struct iwl_mod_params iwlagn_mod_params = {
@@ -232,7 +233,7 @@ int iwlagn_txfifo_flush(struct iwl_priv *priv, u16 flush_control)
 				IWL_PAN_SCD_BK_MSK | IWL_PAN_SCD_MGMT_MSK |
 				IWL_PAN_SCD_MULTICAST_MSK;
 
-	if (priv->cfg->sku & EEPROM_SKU_CAP_11N_ENABLE)
+	if (cfg(priv)->sku & EEPROM_SKU_CAP_11N_ENABLE)
 		flush_cmd.fifo_control |= IWL_AGG_TX_QUEUE_MSK;
 
 	IWL_DEBUG_INFO(priv, "fifo queue control: 0X%x\n",
@@ -374,15 +375,15 @@ void iwlagn_send_advance_bt_config(struct iwl_priv *priv)
 	BUILD_BUG_ON(sizeof(iwlagn_def_3w_lookup) !=
 			sizeof(basic.bt3_lookup_table));
 
-	if (priv->cfg->bt_params) {
-		if (priv->cfg->bt_params->bt_session_2) {
+	if (cfg(priv)->bt_params) {
+		if (cfg(priv)->bt_params->bt_session_2) {
 			bt_cmd_2000.prio_boost = cpu_to_le32(
-				priv->cfg->bt_params->bt_prio_boost);
+				cfg(priv)->bt_params->bt_prio_boost);
 			bt_cmd_2000.tx_prio_boost = 0;
 			bt_cmd_2000.rx_prio_boost = 0;
 		} else {
 			bt_cmd_6000.prio_boost =
-				priv->cfg->bt_params->bt_prio_boost;
+				cfg(priv)->bt_params->bt_prio_boost;
 			bt_cmd_6000.tx_prio_boost = 0;
 			bt_cmd_6000.rx_prio_boost = 0;
 		}
@@ -430,7 +431,7 @@ void iwlagn_send_advance_bt_config(struct iwl_priv *priv)
 		       priv->bt_full_concurrent ?
 		       "full concurrency" : "3-wire");
 
-	if (priv->cfg->bt_params->bt_session_2) {
+	if (cfg(priv)->bt_params->bt_session_2) {
 		memcpy(&bt_cmd_2000.basic, &basic,
 			sizeof(basic));
 		ret = iwl_trans_send_cmd_pdu(trans(priv), REPLY_BT_CONFIG,
@@ -799,8 +800,8 @@ static bool is_single_rx_stream(struct iwl_priv *priv)
  */
 static int iwl_get_active_rx_chain_count(struct iwl_priv *priv)
 {
-	if (priv->cfg->bt_params &&
-	    priv->cfg->bt_params->advanced_bt_coexist &&
+	if (cfg(priv)->bt_params &&
+	    cfg(priv)->bt_params->advanced_bt_coexist &&
 	    (priv->bt_full_concurrent ||
 	     priv->bt_traffic_load >= IWL_BT_COEX_TRAFFIC_LOAD_HIGH)) {
 		/*
@@ -871,8 +872,8 @@ void iwlagn_set_rxon_chain(struct iwl_priv *priv, struct iwl_rxon_context *ctx)
 	else
 		active_chains = hw_params(priv).valid_rx_ant;
 
-	if (priv->cfg->bt_params &&
-	    priv->cfg->bt_params->advanced_bt_coexist &&
+	if (cfg(priv)->bt_params &&
+	    cfg(priv)->bt_params->advanced_bt_coexist &&
 	    (priv->bt_full_concurrent ||
 	     priv->bt_traffic_load >= IWL_BT_COEX_TRAFFIC_LOAD_HIGH)) {
 		/*
@@ -932,57 +933,6 @@ u8 iwl_toggle_tx_ant(struct iwl_priv *priv, u8 ant, u8 valid)
 			return ind;
 	}
 	return ant;
-}
-
-/* notification wait support */
-void iwlagn_init_notification_wait(struct iwl_priv *priv,
-				   struct iwl_notification_wait *wait_entry,
-				   u8 cmd,
-				   void (*fn)(struct iwl_priv *priv,
-					      struct iwl_rx_packet *pkt,
-					      void *data),
-				   void *fn_data)
-{
-	wait_entry->fn = fn;
-	wait_entry->fn_data = fn_data;
-	wait_entry->cmd = cmd;
-	wait_entry->triggered = false;
-	wait_entry->aborted = false;
-
-	spin_lock_bh(&priv->notif_wait_lock);
-	list_add(&wait_entry->list, &priv->notif_waits);
-	spin_unlock_bh(&priv->notif_wait_lock);
-}
-
-int iwlagn_wait_notification(struct iwl_priv *priv,
-			     struct iwl_notification_wait *wait_entry,
-			     unsigned long timeout)
-{
-	int ret;
-
-	ret = wait_event_timeout(priv->notif_waitq,
-				 wait_entry->triggered || wait_entry->aborted,
-				 timeout);
-
-	spin_lock_bh(&priv->notif_wait_lock);
-	list_del(&wait_entry->list);
-	spin_unlock_bh(&priv->notif_wait_lock);
-
-	if (wait_entry->aborted)
-		return -EIO;
-
-	/* return value is always >= 0 */
-	if (ret <= 0)
-		return -ETIMEDOUT;
-	return 0;
-}
-
-void iwlagn_remove_notification(struct iwl_priv *priv,
-				struct iwl_notification_wait *wait_entry)
-{
-	spin_lock_bh(&priv->notif_wait_lock);
-	list_del(&wait_entry->list);
-	spin_unlock_bh(&priv->notif_wait_lock);
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1208,8 +1158,8 @@ int iwlagn_suspend(struct iwl_priv *priv,
 	 * For QoS counters, we store the one to use next, so subtract 0x10
 	 * since the uCode will add 0x10 before using the value.
 	 */
-	for (i = 0; i < 8; i++) {
-		seq = priv->shrd->tid_data[IWL_AP_ID][i].seq_number;
+	for (i = 0; i < IWL_MAX_TID_COUNT; i++) {
+		seq = priv->tid_data[IWL_AP_ID][i].seq_number;
 		seq -= 0x10;
 		wakeup_filter_cmd.qos_seq[i] = cpu_to_le16(seq);
 	}
@@ -1246,7 +1196,7 @@ int iwlagn_suspend(struct iwl_priv *priv,
 
 	priv->shrd->wowlan = true;
 
-	ret = iwlagn_load_ucode_wait_alive(priv, IWL_UCODE_WOWLAN);
+	ret = iwl_load_ucode_wait_alive(trans(priv), IWL_UCODE_WOWLAN);
 	if (ret)
 		goto out;
 

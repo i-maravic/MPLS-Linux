@@ -731,22 +731,22 @@ reuse_rx:
 				bnx2x_reuse_rx_data(fp, bd_cons, bd_prod);
 				goto next_rx;
 			}
+		}
 
-			skb_put(skb, len);
-			skb->protocol = eth_type_trans(skb, bp->dev);
+		skb_put(skb, len);
+		skb->protocol = eth_type_trans(skb, bp->dev);
 
-			/* Set Toeplitz hash for a none-LRO skb */
-			skb->rxhash = bnx2x_get_rxhash(bp, cqe_fp);
+		/* Set Toeplitz hash for a none-LRO skb */
+		skb->rxhash = bnx2x_get_rxhash(bp, cqe_fp);
 
-			skb_checksum_none_assert(skb);
+		skb_checksum_none_assert(skb);
 
-			if (bp->dev->features & NETIF_F_RXCSUM) {
+		if (bp->dev->features & NETIF_F_RXCSUM) {
 
-				if (likely(BNX2X_RX_CSUM_OK(cqe)))
-					skb->ip_summed = CHECKSUM_UNNECESSARY;
-				else
-					fp->eth_q_stats.hw_csum_err++;
-			}
+			if (likely(BNX2X_RX_CSUM_OK(cqe)))
+				skb->ip_summed = CHECKSUM_UNNECESSARY;
+			else
+				fp->eth_q_stats.hw_csum_err++;
 		}
 
 		skb_record_rx_queue(skb, fp->rx_queue);
@@ -1545,7 +1545,8 @@ static inline int bnx2x_init_rss_pf(struct bnx2x *bp)
 	if (bp->multi_mode != ETH_RSS_MODE_DISABLED) {
 		for (i = 0; i < sizeof(ind_table); i++)
 			ind_table[i] =
-				bp->fp->cl_id +	(i % num_eth_queues);
+				bp->fp->cl_id +
+				ethtool_rxfh_indir_default(i, num_eth_queues);
 	}
 
 	/*

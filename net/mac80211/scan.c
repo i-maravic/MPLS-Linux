@@ -106,7 +106,7 @@ ieee80211_bss_info_update(struct ieee80211_local *local,
 	/* save the ERP value so that it is available at association time */
 	if (elems->erp_info && elems->erp_info_len >= 1) {
 		bss->erp_value = elems->erp_info[0];
-		bss->has_erp_value = 1;
+		bss->has_erp_value = true;
 	}
 
 	if (elems->tim) {
@@ -297,7 +297,7 @@ static void __ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted,
 	if (!was_hw_scan) {
 		ieee80211_configure_filter(local);
 		drv_sw_scan_complete(local);
-		ieee80211_offchannel_return(local, true, true);
+		ieee80211_offchannel_return(local, true);
 	}
 
 	ieee80211_recalc_idle(local);
@@ -602,7 +602,7 @@ static void ieee80211_scan_state_suspend(struct ieee80211_local *local,
 	 * in off-channel state..will put that back
 	 * on-channel at the end of scanning.
 	 */
-	ieee80211_offchannel_return(local, true, false);
+	ieee80211_offchannel_return(local, false);
 
 	*next_delay = HZ / 5;
 	/* afterwards, resume scan & go to next channel */
@@ -625,7 +625,7 @@ static void ieee80211_scan_state_resume(struct ieee80211_local *local,
 	local->leave_oper_channel_time = jiffies;
 
 	/* advance to the next channel to be scanned */
-	local->next_scan_state = SCAN_DECISION;
+	local->next_scan_state = SCAN_SET_CHANNEL;
 }
 
 void ieee80211_scan_work(struct work_struct *work)

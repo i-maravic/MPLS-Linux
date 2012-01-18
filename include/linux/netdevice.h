@@ -55,7 +55,6 @@
 
 #include <linux/netdev_features.h>
 
-struct vlan_group;
 struct netpoll_info;
 struct phy_device;
 /* 802.11 specific */
@@ -598,7 +597,7 @@ struct rps_map {
 	struct rcu_head rcu;
 	u16 cpus[0];
 };
-#define RPS_MAP_SIZE(_num) (sizeof(struct rps_map) + (_num * sizeof(u16)))
+#define RPS_MAP_SIZE(_num) (sizeof(struct rps_map) + ((_num) * sizeof(u16)))
 
 /*
  * The rps_dev_flow structure contains the mapping of a flow to a CPU, the
@@ -622,7 +621,7 @@ struct rps_dev_flow_table {
 	struct rps_dev_flow flows[0];
 };
 #define RPS_DEV_FLOW_TABLE_SIZE(_num) (sizeof(struct rps_dev_flow_table) + \
-    (_num * sizeof(struct rps_dev_flow)))
+    ((_num) * sizeof(struct rps_dev_flow)))
 
 /*
  * The rps_sock_flow_table contains mappings of flows to the last CPU
@@ -633,7 +632,7 @@ struct rps_sock_flow_table {
 	u16 ents[0];
 };
 #define	RPS_SOCK_FLOW_TABLE_SIZE(_num) (sizeof(struct rps_sock_flow_table) + \
-    (_num * sizeof(u16)))
+    ((_num) * sizeof(u16)))
 
 #define RPS_NO_CPU 0xffff
 
@@ -685,7 +684,7 @@ struct xps_map {
 	struct rcu_head rcu;
 	u16 queues[0];
 };
-#define XPS_MAP_SIZE(_num) (sizeof(struct xps_map) + (_num * sizeof(u16)))
+#define XPS_MAP_SIZE(_num) (sizeof(struct xps_map) + ((_num) * sizeof(u16)))
 #define XPS_MIN_MAP_ALLOC ((L1_CACHE_BYTES - sizeof(struct xps_map))	\
     / sizeof(u16))
 
@@ -707,6 +706,23 @@ struct netdev_tc_txq {
 	u16 count;
 	u16 offset;
 };
+
+#if defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE)
+/*
+ * This structure is to hold information about the device
+ * configured to run FCoE protocol stack.
+ */
+struct netdev_fcoe_hbainfo {
+	char	manufacturer[64];
+	char	serial_number[64];
+	char	hardware_version[64];
+	char	driver_version[64];
+	char	optionrom_version[64];
+	char	firmware_version[64];
+	char	model[256];
+	char	model_description[256];
+};
+#endif
 
 /*
  * This structure defines the management hooks for network devices.
@@ -792,11 +808,11 @@ struct netdev_tc_txq {
  *	3. Update dev->stats asynchronously and atomically, and define
  *	   neither operation.
  *
- * void (*ndo_vlan_rx_add_vid)(struct net_device *dev, unsigned short vid);
+ * int (*ndo_vlan_rx_add_vid)(struct net_device *dev, unsigned short vid);
  *	If device support VLAN filtering (dev->features & NETIF_F_HW_VLAN_FILTER)
  *	this function is called when a VLAN id is registered.
  *
- * void (*ndo_vlan_rx_kill_vid)(struct net_device *dev, unsigned short vid);
+ * int (*ndo_vlan_rx_kill_vid)(struct net_device *dev, unsigned short vid);
  *	If device support VLAN filtering (dev->features & NETIF_F_HW_VLAN_FILTER)
  *	this function is called when a VLAN id is unregistered.
  *
@@ -847,6 +863,13 @@ struct netdev_tc_txq {
  *	is a possible candidate for Direct Data Placement (DDP). The LLD can
  *	perform necessary setup and returns 1 to indicate the device is set up
  *	successfully to perform DDP on this I/O, otherwise this returns 0.
+ *
+ * int (*ndo_fcoe_get_hbainfo)(struct net_device *dev,
+ *			       struct netdev_fcoe_hbainfo *hbainfo);
+ *	Called when the FCoE Protocol stack wants information on the underlying
+ *	device. This information is utilized by the FCoE protocol stack to
+ *	register attributes with Fiber Channel management service as per the
+ *	FC-GS Fabric Device Management Information(FDMI) specification.
  *
  * int (*ndo_fcoe_get_wwn)(struct net_device *dev, u64 *wwn, int type);
  *	Called when the underlying device wants to override default World Wide
@@ -911,9 +934,9 @@ struct net_device_ops {
 						     struct rtnl_link_stats64 *storage);
 	struct net_device_stats* (*ndo_get_stats)(struct net_device *dev);
 
-	void			(*ndo_vlan_rx_add_vid)(struct net_device *dev,
+	int			(*ndo_vlan_rx_add_vid)(struct net_device *dev,
 						       unsigned short vid);
-	void			(*ndo_vlan_rx_kill_vid)(struct net_device *dev,
+	int			(*ndo_vlan_rx_kill_vid)(struct net_device *dev,
 						        unsigned short vid);
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	void                    (*ndo_poll_controller)(struct net_device *dev);
@@ -951,6 +974,8 @@ struct net_device_ops {
 						       u16 xid,
 						       struct scatterlist *sgl,
 						       unsigned int sgc);
+	int			(*ndo_fcoe_get_hbainfo)(struct net_device *dev,
+							struct netdev_fcoe_hbainfo *hbainfo);
 #endif
 
 #if IS_ENABLED(CONFIG_LIBFCOE)
@@ -1096,7 +1121,7 @@ struct net_device {
 	/* Protocol specific pointers */
 
 #if IS_ENABLED(CONFIG_VLAN_8021Q)
-	struct vlan_group __rcu	*vlgrp;		/* VLAN group */
+	struct vlan_info __rcu	*vlan_info;	/* VLAN info */
 #endif
 #if IS_ENABLED(CONFIG_NET_DSA)
 	struct dsa_switch_tree	*dsa_ptr;	/* dsa specific data */

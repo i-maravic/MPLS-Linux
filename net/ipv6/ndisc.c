@@ -93,7 +93,7 @@
 
 static u32 ndisc_hash(const void *pkey,
 		      const struct net_device *dev,
-		      __u32 rnd);
+		      __u32 *hash_rnd);
 static int ndisc_constructor(struct neighbour *neigh);
 static void ndisc_solicit(struct neighbour *neigh, struct sk_buff *skb);
 static void ndisc_error_report(struct neighbour *neigh, struct sk_buff *skb);
@@ -349,16 +349,9 @@ EXPORT_SYMBOL(ndisc_mc_map);
 
 static u32 ndisc_hash(const void *pkey,
 		      const struct net_device *dev,
-		      __u32 hash_rnd)
+		      __u32 *hash_rnd)
 {
-	const u32 *p32 = pkey;
-	u32 addr_hash, i;
-
-	addr_hash = 0;
-	for (i = 0; i < (sizeof(struct in6_addr) / sizeof(u32)); i++)
-		addr_hash ^= *p32++;
-
-	return jhash_2words(addr_hash, dev->ifindex, hash_rnd);
+	return ndisc_hashfn(pkey, dev, hash_rnd);
 }
 
 static int ndisc_constructor(struct neighbour *neigh)
@@ -516,14 +509,7 @@ void ndisc_send_skb(struct sk_buff *skb,
 	type = icmp6h->icmp6_type;
 
 	icmpv6_flow_init(sk, &fl6, type, saddr, daddr, dev->ifindex);
-
-	dst = icmp6_dst_alloc(dev, neigh, daddr);
-	if (!dst) {
-		kfree_skb(skb);
-		return;
-	}
-
-	dst = xfrm_lookup(net, dst, flowi6_to_flowi(&fl6), NULL, 0);
+	dst = icmp6_dst_alloc(dev, neigh, &fl6);
 	if (IS_ERR(dst)) {
 		kfree_skb(skb);
 		return;
@@ -1238,7 +1224,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 	rt = rt6_get_dflt_router(&ipv6_hdr(skb)->saddr, skb->dev);
 
 	if (rt)
-		neigh = dst_get_neighbour(&rt->dst);
+		neigh = dst_get_neighbour_noref(&rt->dst);
 
 	if (rt && lifetime == 0) {
 		neigh_clone(neigh);
@@ -1258,7 +1244,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 			return;
 		}
 
-		neigh = dst_get_neighbour(&rt->dst);
+		neigh = dst_get_neighbour_noref(&rt->dst);
 		if (neigh == NULL) {
 			ND_PRINTK0(KERN_ERR
 				   "ICMPv6 RA: %s() got default router without neighbour.\n",
@@ -1272,7 +1258,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 	}
 
 	if (rt)
-		rt->rt6i_expires = jiffies + (HZ * lifetime);
+		rt->dst.expires = jiffies + (HZ * lifetime);
 
 	if (ra_msg->icmph.icmp6_hop_limit) {
 		in6_dev->cnf.hop_limit = ra_msg->icmph.icmp6_hop_limit;
@@ -1382,7 +1368,9 @@ skip_routeinfo:
 		for (p = ndopts.nd_opts_pi;
 		     p;
 		     p = ndisc_next_option(p, ndopts.nd_opts_pi_end)) {
-			addrconf_prefix_rcv(skb->dev, (u8*)p, (p->nd_opt_len) << 3);
+			addrconf_prefix_rcv(skb->dev, (u8 *)p,
+					    (p->nd_opt_len) << 3,
+					    ndopts.nd_opts_src_lladdr != NULL);
 		}
 	}
 

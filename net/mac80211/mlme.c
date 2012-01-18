@@ -819,7 +819,7 @@ void ieee80211_dynamic_ps_enable_work(struct work_struct *work)
 	}
 
 	if ((local->hw.flags & IEEE80211_HW_PS_NULLFUNC_STACK) &&
-	    (!(ifmgd->flags & IEEE80211_STA_NULLFUNC_ACKED))) {
+	    !(ifmgd->flags & IEEE80211_STA_NULLFUNC_ACKED)) {
 		netif_tx_stop_all_queues(sdata->dev);
 
 		if (drv_tx_frames_pending(local))
@@ -1381,6 +1381,16 @@ void ieee80211_beacon_connection_loss_work(struct work_struct *work)
 	struct ieee80211_sub_if_data *sdata =
 		container_of(work, struct ieee80211_sub_if_data,
 			     u.mgd.beacon_connection_loss_work);
+	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
+	struct sta_info *sta;
+
+	if (ifmgd->associated) {
+		rcu_read_lock();
+		sta = sta_info_get(sdata, ifmgd->bssid);
+		if (sta)
+			sta->beacon_loss_count++;
+		rcu_read_unlock();
+	}
 
 	if (sdata->local->hw.flags & IEEE80211_HW_CONNECTION_MONITOR)
 		__ieee80211_connection_loss(sdata);
@@ -1577,10 +1587,10 @@ static bool ieee80211_assoc_success(struct ieee80211_work *wk,
 		return false;
 	}
 
-	set_sta_flag(sta, WLAN_STA_AUTH);
-	set_sta_flag(sta, WLAN_STA_ASSOC);
+	sta_info_move_state(sta, IEEE80211_STA_AUTH);
+	sta_info_move_state(sta, IEEE80211_STA_ASSOC);
 	if (!(ifmgd->flags & IEEE80211_STA_CONTROL_PORT))
-		set_sta_flag(sta, WLAN_STA_AUTHORIZED);
+		sta_info_move_state(sta, IEEE80211_STA_AUTHORIZED);
 
 	rates = 0;
 	basic_rates = 0;
@@ -2371,6 +2381,7 @@ void ieee80211_sta_setup_sdata(struct ieee80211_sub_if_data *sdata)
 		    (unsigned long) sdata);
 
 	ifmgd->flags = 0;
+	ifmgd->powersave = sdata->wdev.ps;
 
 	mutex_init(&ifmgd->mtx);
 

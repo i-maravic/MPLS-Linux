@@ -151,11 +151,15 @@ static __le16 ieee80211_duration(struct ieee80211_tx_data *tx,
 		rate = mrate;
 	}
 
-	/* Time needed to transmit ACK
-	 * (10 bytes + 4-byte FCS = 112 bits) plus SIFS; rounded up
-	 * to closest integer */
-
-	dur = ieee80211_frame_duration(local, 10, rate, erp,
+	/* Don't calculate ACKs for QoS Frames with NoAck Policy set */
+	if (ieee80211_is_data_qos(hdr->frame_control) &&
+	    *(ieee80211_get_qos_ctl(hdr)) | IEEE80211_QOS_CTL_ACK_POLICY_NOACK)
+		dur = 0;
+	else
+		/* Time needed to transmit ACK
+		 * (10 bytes + 4-byte FCS = 112 bits) plus SIFS; rounded up
+		 * to closest integer */
+		dur = ieee80211_frame_duration(local, 10, rate, erp,
 				tx->sdata->vif.bss_conf.use_short_preamble);
 
 	if (next_frag_len) {
@@ -291,7 +295,6 @@ ieee80211_tx_h_check_assoc(struct ieee80211_tx_data *tx)
 
 	if (likely(tx->flags & IEEE80211_TX_UNICAST)) {
 		if (unlikely(!assoc &&
-			     tx->sdata->vif.type != NL80211_IFTYPE_ADHOC &&
 			     ieee80211_is_data(hdr->frame_control))) {
 #ifdef CONFIG_MAC80211_VERBOSE_DEBUG
 			printk(KERN_DEBUG "%s: dropped data frame to not "
@@ -301,17 +304,14 @@ ieee80211_tx_h_check_assoc(struct ieee80211_tx_data *tx)
 			I802_DEBUG_INC(tx->local->tx_handlers_drop_not_assoc);
 			return TX_DROP;
 		}
-	} else {
-		if (unlikely(ieee80211_is_data(hdr->frame_control) &&
-			     tx->local->num_sta == 0 &&
-			     tx->sdata->vif.type != NL80211_IFTYPE_ADHOC)) {
-			/*
-			 * No associated STAs - no need to send multicast
-			 * frames.
-			 */
-			return TX_DROP;
-		}
-		return TX_CONTINUE;
+	} else if (unlikely(tx->sdata->vif.type == NL80211_IFTYPE_AP &&
+			    ieee80211_is_data(hdr->frame_control) &&
+			    !atomic_read(&tx->sdata->u.ap.num_sta_authorized))) {
+		/*
+		 * No associated STAs - no need to send multicast
+		 * frames.
+		 */
+		return TX_DROP;
 	}
 
 	return TX_CONTINUE;
@@ -636,6 +636,7 @@ ieee80211_tx_h_rate_ctrl(struct ieee80211_tx_data *tx)
 	else
 		txrc.max_rate_idx = fls(txrc.rate_idx_mask) - 1;
 	txrc.bss = (tx->sdata->vif.type == NL80211_IFTYPE_AP ||
+		    tx->sdata->vif.type == NL80211_IFTYPE_MESH_POINT ||
 		    tx->sdata->vif.type == NL80211_IFTYPE_ADHOC);
 
 	/* set up RTS protection if desired */
@@ -1063,9 +1064,11 @@ static bool ieee80211_tx_prep_agg(struct ieee80211_tx_data *tx,
 				  int tid)
 {
 	bool queued = false;
+	bool reset_agg_timer = false;
 
 	if (test_bit(HT_AGG_STATE_OPERATIONAL, &tid_tx->state)) {
 		info->flags |= IEEE80211_TX_CTL_AMPDU;
+		reset_agg_timer = true;
 	} else if (test_bit(HT_AGG_STATE_WANT_START, &tid_tx->state)) {
 		/*
 		 * nothing -- this aggregation session is being started
@@ -1097,6 +1100,7 @@ static bool ieee80211_tx_prep_agg(struct ieee80211_tx_data *tx,
 			/* do nothing, let packet pass through */
 		} else if (test_bit(HT_AGG_STATE_OPERATIONAL, &tid_tx->state)) {
 			info->flags |= IEEE80211_TX_CTL_AMPDU;
+			reset_agg_timer = true;
 		} else {
 			queued = true;
 			info->control.vif = &tx->sdata->vif;
@@ -1105,6 +1109,11 @@ static bool ieee80211_tx_prep_agg(struct ieee80211_tx_data *tx,
 		}
 		spin_unlock(&tx->sta->lock);
 	}
+
+	/* reset session timer */
+	if (reset_agg_timer && tid_tx->timeout)
+		mod_timer(&tid_tx->session_timer,
+			  TU_TO_EXP_TIME(tid_tx->timeout));
 
 	return queued;
 }
@@ -1173,16 +1182,8 @@ ieee80211_tx_prepare(struct ieee80211_sub_if_data *sdata,
 	if (is_multicast_ether_addr(hdr->addr1)) {
 		tx->flags &= ~IEEE80211_TX_UNICAST;
 		info->flags |= IEEE80211_TX_CTL_NO_ACK;
-	} else {
+	} else
 		tx->flags |= IEEE80211_TX_UNICAST;
-		if (unlikely(local->wifi_wme_noack_test))
-			info->flags |= IEEE80211_TX_CTL_NO_ACK;
-		/*
-		 * Flags are initialized to 0. Hence, no need to
-		 * explicitly unset IEEE80211_TX_CTL_NO_ACK since
-		 * it might already be set for injected frames.
-		 */
-	}
 
 	if (!(info->flags & IEEE80211_TX_CTL_DONTFRAG)) {
 		if (!(tx->flags & IEEE80211_TX_UNICAST) ||
@@ -1223,9 +1224,10 @@ static bool ieee80211_tx_frags(struct ieee80211_local *local,
 			 * queue is woken again.
 			 */
 			if (txpending)
-				skb_queue_splice(skbs, &local->pending[q]);
+				skb_queue_splice_init(skbs, &local->pending[q]);
 			else
-				skb_queue_splice_tail(skbs, &local->pending[q]);
+				skb_queue_splice_tail_init(skbs,
+							   &local->pending[q]);
 
 			spin_unlock_irqrestore(&local->queue_stop_reason_lock,
 					       flags);
@@ -1297,7 +1299,7 @@ static bool __ieee80211_tx(struct ieee80211_local *local,
 	ieee80211_tpt_led_trig_tx(local, fc, led_len);
 	ieee80211_led_tx(local, 1);
 
-	WARN_ON(!skb_queue_empty(skbs));
+	WARN_ON_ONCE(!skb_queue_empty(skbs));
 
 	return result;
 }
@@ -1326,8 +1328,11 @@ static int invoke_tx_handlers(struct ieee80211_tx_data *tx)
 	if (!(tx->local->hw.flags & IEEE80211_HW_HAS_RATE_CONTROL))
 		CALL_TXH(ieee80211_tx_h_rate_ctrl);
 
-	if (unlikely(info->flags & IEEE80211_TX_INTFL_RETRANSMISSION))
+	if (unlikely(info->flags & IEEE80211_TX_INTFL_RETRANSMISSION)) {
+		__skb_queue_tail(&tx->skbs, tx->skb);
+		tx->skb = NULL;
 		goto txh_done;
+	}
 
 	CALL_TXH(ieee80211_tx_h_michael_mic_add);
 	CALL_TXH(ieee80211_tx_h_sequence);
@@ -1458,7 +1463,7 @@ void ieee80211_xmit(struct ieee80211_sub_if_data *sdata, struct sk_buff *skb)
 	if (ieee80211_vif_is_mesh(&sdata->vif) &&
 	    ieee80211_is_data(hdr->frame_control) &&
 		!is_multicast_ether_addr(hdr->addr1))
-			if (mesh_nexthop_lookup(skb, sdata)) {
+			if (mesh_nexthop_resolve(skb, sdata)) {
 				/* skb queued: don't free */
 				rcu_read_unlock();
 				return;
@@ -2260,10 +2265,10 @@ static void ieee80211_beacon_add_tim(struct ieee80211_if_ap *bss,
 		/* Bitmap control */
 		*pos++ = n1 | aid0;
 		/* Part Virt Bitmap */
+		skb_put(skb, n2 - n1);
 		memcpy(pos, bss->tim + n1, n2 - n1 + 1);
 
 		tim[1] = n2 - n1 + 4;
-		skb_put(skb, n2 - n1);
 	} else {
 		*pos++ = aid0; /* Bitmap control */
 		*pos++ = 0; /* Part Virt Bitmap */
@@ -2328,9 +2333,9 @@ struct sk_buff *ieee80211_beacon_get_tim(struct ieee80211_hw *hw,
 			} else {
 				unsigned long flags;
 
-				spin_lock_irqsave(&local->sta_lock, flags);
+				spin_lock_irqsave(&local->tim_lock, flags);
 				ieee80211_beacon_add_tim(ap, skb, beacon);
-				spin_unlock_irqrestore(&local->sta_lock, flags);
+				spin_unlock_irqrestore(&local->tim_lock, flags);
 			}
 
 			if (tim_offset)
@@ -2691,15 +2696,15 @@ ieee80211_get_buffered_bc(struct ieee80211_hw *hw,
 }
 EXPORT_SYMBOL(ieee80211_get_buffered_bc);
 
-void ieee80211_tx_skb(struct ieee80211_sub_if_data *sdata, struct sk_buff *skb)
+void ieee80211_tx_skb_tid(struct ieee80211_sub_if_data *sdata,
+			  struct sk_buff *skb, int tid)
 {
 	skb_set_mac_header(skb, 0);
 	skb_set_network_header(skb, 0);
 	skb_set_transport_header(skb, 0);
 
-	/* Send all internal mgmt frames on VO. Accordingly set TID to 7. */
-	skb_set_queue_mapping(skb, IEEE80211_AC_VO);
-	skb->priority = 7;
+	skb_set_queue_mapping(skb, ieee802_1d_to_ac[tid]);
+	skb->priority = tid;
 
 	/*
 	 * The other path calling ieee80211_xmit is from the tasklet,

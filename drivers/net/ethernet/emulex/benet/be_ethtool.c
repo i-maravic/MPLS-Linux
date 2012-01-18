@@ -429,11 +429,14 @@ static int be_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	struct be_phy_info phy_info;
 	u8 mac_speed = 0;
 	u16 link_speed = 0;
+	u8 link_status;
 	int status;
 
 	if ((adapter->link_speed < 0) || (!(netdev->flags & IFF_UP))) {
 		status = be_cmd_link_status_query(adapter, &mac_speed,
-						&link_speed, 0);
+						  &link_speed, &link_status, 0);
+		if (!status)
+			be_link_status_update(adapter, link_status);
 
 		/* link_speed is in units of 10 Mbps */
 		if (link_speed) {
@@ -520,16 +523,13 @@ static int be_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	return 0;
 }
 
-static void
-be_get_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
+static void be_get_ringparam(struct net_device *netdev,
+			     struct ethtool_ringparam *ring)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
 
-	ring->rx_max_pending = adapter->rx_obj[0].q.len;
-	ring->tx_max_pending = adapter->tx_obj[0].q.len;
-
-	ring->rx_pending = atomic_read(&adapter->rx_obj[0].q.used);
-	ring->tx_pending = atomic_read(&adapter->tx_obj[0].q.used);
+	ring->rx_max_pending = ring->rx_pending = adapter->rx_obj[0].q.len;
+	ring->tx_max_pending = ring->tx_pending = adapter->tx_obj[0].q.len;
 }
 
 static void
@@ -703,7 +703,7 @@ be_self_test(struct net_device *netdev, struct ethtool_test *test, u64 *data)
 	}
 
 	if (be_cmd_link_status_query(adapter, &mac_speed,
-				&qos_link_speed, 0) != 0) {
+				     &qos_link_speed, NULL, 0) != 0) {
 		test->flags |= ETH_TEST_FL_FAILED;
 		data[4] = -1;
 	} else if (!mac_speed) {

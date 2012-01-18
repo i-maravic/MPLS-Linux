@@ -371,9 +371,9 @@ static struct mpls_prot_driver mpls4_driver = {
 
 static int __init mpls4_init(void)
 {
-	struct mpls_instr_elem instr[2];
+	/*struct mpls_instr_elem instr[2];
 	struct mpls_label ml;
-	struct mpls_ilm *ilm;
+	struct mpls_ilm *ilm;*/
 	int result = mpls_proto_add(&mpls4_driver);
 	MPLS_ENTER;
 	printk(KERN_INFO "MPLS: IPv4 over MPLS support\n");
@@ -381,7 +381,7 @@ static int __init mpls4_init(void)
 	if (result)
 		return result;
 
-	ml.ml_type = MPLS_LABEL_GEN;
+	/*ml.ml_type = MPLS_LABEL_GEN;
 	ml.u.ml_gen = MPLS_IPV4_EXPLICIT_NULL;
 
 	instr[0].mir_direction = MPLS_IN;
@@ -400,7 +400,7 @@ static int __init mpls4_init(void)
 		mpls_ilm_release(ilm);
 		MPLS_EXIT;
 		return result;
-	}
+	}*/
 	MPLS_EXIT;
 	return 0;
 }

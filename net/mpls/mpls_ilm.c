@@ -133,7 +133,7 @@ int _mpls_ilm_set_instrs(struct mpls_ilm *ilm,
  **/
 
 struct mpls_ilm *mpls_ilm_alloc(unsigned int key, struct mpls_label *ml,
-		struct mpls_instr_elem *instr, int instr_len)
+		/*struct mpls_instr_elem *instr,*/ int instr_len)
 {
 	struct mpls_ilm *ilm;
 
@@ -159,11 +159,11 @@ struct mpls_ilm *mpls_ilm_alloc(unsigned int key, struct mpls_label *ml,
 	ilm->ilm_age = jiffies;
 	ilm->ilm_owner = RTPROT_UNSPEC;
 
-	if (_mpls_ilm_set_instrs(ilm, instr, instr_len)) {
+	/*if (_mpls_ilm_set_instrs(ilm, instr, instr_len)) {
 		mpls_ilm_release(ilm);
 		MPLS_EXIT;
 		return NULL;
-	}
+	}*/
 
 	MPLS_EXIT;
 	return ilm;
@@ -397,7 +397,7 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
 	struct mpls_ilm *ilm     = NULL; /* New ILM to insert */
 	struct mpls_label *ml    = NULL; /* Requested Label */
 	unsigned int key         = 0;    /* Key to use */
-	struct mpls_instr_elem instr[2];
+	/*struct mpls_instr_elem instr[2];*/
 
 	MPLS_ENTER;
 
@@ -426,12 +426,12 @@ struct mpls_ilm *mpls_add_in_label(const struct mpls_in_label_req *in)
 	 * Allocate a new input Information/Label,
 	 */
 
-	instr[0].mir_direction = MPLS_IN;
+	/*instr[0].mir_direction = MPLS_IN;
 	instr[0].mir_opcode    = MPLS_OP_POP;
 	instr[1].mir_direction = MPLS_IN;
-	instr[1].mir_opcode    = MPLS_OP_PEEK;
+	instr[1].mir_opcode    = MPLS_OP_PEEK;*/
 
-	ilm = mpls_ilm_alloc(key, ml, instr, 2);
+	ilm = mpls_ilm_alloc(key, ml, /*instr,*/ 2);
 	if (unlikely(!ilm)) {
 		MPLS_EXIT;
 		return ERR_PTR(-ENOMEM);
@@ -611,7 +611,6 @@ int mpls_attach_in2out(struct mpls_xconnect_req *req,
 	mi = mpls_instr_getlast(ilm->ilm_instr);
 
 	switch (mi->mi_opcode) {
-	case MPLS_OP_DLV:
 	case MPLS_OP_PEEK:
 	case MPLS_OP_DROP:
 		mi->mi_opcode = MPLS_OP_FWD;

@@ -135,7 +135,12 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_pop)
 		MPLS_EXIT;
 		return MPLS_RESULT_DROP;
 	}
-
+	/* 
+	 * copy label value to labelspace value 
+	 * (context labelspace) 
+	 */
+	
+	cb->context_labelspace = cb->label;
 	/*
 	 * Is this the last entry in the stack? then flag it
 	 */
@@ -147,6 +152,13 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_pop)
 
 	if (!cb->popped_bos)
 		mpls_label_entry_peek(skb);
+	else {
+		cb->bos = 1;
+		skb->protocol = 
+			(*nhlfe)->nhlfe_proto->ethertype;
+	}
+
+	cb->set_exp = 0;
 
 	MPLS_EXIT;
 	return MPLS_RESULT_SUCCESS;
@@ -157,8 +169,8 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_pop)
 {
 	MPLS_ENTER;
 	*data = NULL;
-	if (direction != MPLS_IN) {
-		MPLS_DEBUG("POP only valid for incoming labels\n");
+	if (direction != MPLS_OUT) {
+		MPLS_DEBUG("POP only valid for NHLFE\n");
 		MPLS_EXIT;
 		return -EINVAL;
 	}
@@ -194,19 +206,43 @@ inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_peek)
 
 MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_peek)
 {
+	struct mpls_nhlfe *nhlfe;
 	MPLS_ENTER;
 	*data = NULL;
-	if (direction != MPLS_IN) {
-		MPLS_DEBUG("PEEK only valid for incoming labels\n");
+	
+
+	if (direction != MPLS_OUT) {
+		MPLS_DEBUG("POP only valid for NHLFE\n");
 		MPLS_EXIT;
 		return -EINVAL;
 	}
+	
+	nhlfe = _mpls_as_nhlfe(parent);
+	nhlfe->dst.dev = init_net.loopback_dev;
+	nhlfe->dst.header_len = 0;
+
+	nhlfe->nhlfe_proto = mpls_proto_find_by_family(AF_INET);
+	if (unlikely(!nhlfe->nhlfe_proto)) {
+		MPLS_EXIT;
+		return -ENOENT;
+	}
+	dev_hold(nhlfe->dst.dev);
 	*last_able = 1;
 	MPLS_EXIT;
 	return 0;
 }
 
-
+MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_op_peek)
+{
+	MPLS_ENTER;
+	if (direction == MPLS_OUT) {
+		struct mpls_nhlfe *nhlfe = _mpls_as_nhlfe(parent);
+		mpls_proto_release(nhlfe->nhlfe_proto);
+		dev_put(nhlfe->dst.dev);
+		nhlfe->dst.dev = NULL;
+	}
+	MPLS_EXIT;
+}
 
 /*********************************************************************
  * MPLS_OP_PUSH
@@ -237,22 +273,22 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_push)
 
 	/* Only MPLS_LABEL_GEN type rigth now */
 	label = ml->u.ml_gen;
+	printk (KERN_DEBUG "BLAAAAAAAAAAAA labela %u",label);
 
 	/*
 	 * no matter what layer 2 we are on, we need the shim! (mpls-encap RFC)
 	 */
 	shim = htonl(((label & 0xFFFFF) << 12) |
-			((cb->exp & 0x7) << 9) |
-			((cb->bos & 0x1) << 8) |
+			((cb->exp & cb->set_exp & 0x7) << 9) |
+			((cb->bos & cb->popped_bos & 0x1) << 8) |
 			(cb->ttl & 0xFF));
 	memcpy(skb->data, &shim, MPLS_HDR_LEN);
 	cb->label = label;
 	cb->bos = 0;
-	cb->popped_bos = 0;
 	/*
-	 * reset exp so the next shim would have it reseted
+	 * reset set_exp so the next shim would have it reseted
 	 */
-	cb->exp = 0;
+	cb->set_exp = 0;
 
 	skb->protocol = htons(ETH_P_MPLS_UC);
 	MPLS_EXIT;
@@ -318,51 +354,6 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_push)
 
 
 /*********************************************************************
- * MPLS_OP_DLV
- * DESC   : "Deliver to the upper layers, set skb protocol to ILM's"
- *          "Incoming L3 protocol"
- * EXEC   : mpls_in_opcode_dlv
- * BUILD  : mpls_build_opcode_dlv
- * UNBUILD: NULL
- * INPUT  : true
- * OUTPUT : false
- * DATA   : NULL
- * LAST   : true
- *********************************************************************/
-
-inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_dlv)
-{
-	MPLS_ENTER;
-	while (!MPLSCB(*pskb)->popped_bos) {
-		if (mpls_in_op_pop(pskb, ilm, nhlfe, data) !=
-			MPLS_RESULT_SUCCESS) {
-			MPLS_EXIT;
-			return MPLS_RESULT_DROP;
-		}
-	}
-	MPLS_EXIT;
-	return MPLS_RESULT_DLV;
-}
-
-
-
-MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_dlv)
-{
-	MPLS_EXIT;
-	*data = NULL;
-	if (unlikely(direction != MPLS_IN)) {
-		MPLS_DEBUG("DLV only valid for incoming labels\n");
-		MPLS_EXIT;
-		return -EINVAL;
-	}
-	*last_able = 1;
-	MPLS_EXIT;
-	return 0;
-}
-
-
-
-/*********************************************************************
  * MPLS_OP_FWD
  * DESC   : "Forward packet, applying a given NHLFE"
  * EXEC   : mpls_op_fwd
@@ -393,7 +384,7 @@ MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_fwd)
 
 	MPLS_ENTER;
 	if (direction != MPLS_IN) {
-		MPLS_DEBUG("FWD only valid for incoming labels\n");
+		MPLS_DEBUG("FWD only valid for ILM\n");
 		MPLS_EXIT;
 		return -EINVAL;
 	}
@@ -844,109 +835,6 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_exp_fwd)
 
 
 /*********************************************************************
- * MPLS_OP_SET_RX
- * DESC   : "Artificially change the incoming network device"
- * EXEC   : mpls_in_op_set_rx
- * BUILD  : mpls_build_opcode_set_rx
- * UNBUILD: mpls_unbuild_opcode_set_rx
- * CLEAN  : mpls_clean_opcode_set_rx
- * INPUT  : true
- * OUTPUT : false
- * DATA   : Reference to a net_device (struct net_device*)
- * LAST   : false
- *
- * Remark : If the interface goes down/unregistered, mpls_netdev_event
- *          (cf. mpls_init.c) will change this opcode.
- *********************************************************************/
-
-inline MPLS_IN_OPCODE_PROTOTYPE(mpls_in_op_set_rx)
-{
-	MPLS_ENTER;
-	/*
-	 * Change the incoming net_device for the socket buffer
-	 */
-	skb_set_dev(*pskb, (struct net_device *)data);
-	MPLS_EXIT;
-	return MPLS_RESULT_SUCCESS;
-}
-
-//dodati da se povećava refcnt mpls_ptr
-MPLS_BUILD_OPCODE_PROTOTYPE(mpls_build_opcode_set_rx)
-{
-	struct mpls_interface *mpls_if = NULL;
-	struct mpls_ilm *pilm = NULL;
-	struct net_device *dev = NULL;
-	unsigned int if_index = 0; /* Incoming If Index */
-
-	MPLS_ENTER;
-	*data = NULL;
-	if (direction != MPLS_IN) {
-		MPLS_DEBUG("SET_RX only valid for incoming labels\n");
-		MPLS_EXIT;
-		return -EINVAL;
-	}
-
-	pilm = _mpls_as_ilm(parent);
-	/*
-	 * Get a reference to the device given the interface index
-	 */
-
-	if_index = instr->mir_set_rx;
-	dev = dev_get_by_index(&init_net, if_index);
-	if (unlikely(!dev)) {
-		MPLS_DEBUG("SET_RX if_index %d unknown\n", if_index);
-		MPLS_EXIT;
-		return -ESRCH;
-	}
-
-	/* Check if interface it's MPLS enabled */
-	if (__mpls_get_labelspace(dev) == -1) {
-		MPLS_DEBUG("SET_RX - device %s ifindex %d MPLS disabled\n",
-				dev->name, if_index);
-		dev_put(dev);
-		MPLS_EXIT;
-		return -ESRCH;
-	}
-	mpls_if = dev->mpls_ptr;
-
-	*data = (void *)dev;
-
-	/*
-	 * Add to the device list of ILMs (list_in)
-	 * NOTE: we're still holding a ref to dev.
-	 */
-	list_add(&pilm->dev_entry, &mpls_if->list_in);
-	MPLS_EXIT;
-	return 0;
-}
-
-/* Get the ifIndex of the device and returns it */
-MPLS_UNBUILD_OPCODE_PROTOTYPE(mpls_unbuild_opcode_set_rx)
-{
-	struct net_device *dev;
-
-	MPLS_ENTER;
-	dev = _mpls_as_netdev(data);
-	instr->mir_set_rx = dev->ifindex;
-	MPLS_EXIT;
-}
-
-MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set_rx)
-{
-	struct net_device *dev = NULL;
-	/* dev is already being held */
-	MPLS_ENTER;
-	if (!data)
-		return;
-	dev = _mpls_as_netdev(data);
-	mpls_list_del_init(&_mpls_as_ilm(parent)->dev_entry);
-	dev_put(dev);
-	MPLS_EXIT;
-}
-
-
-
-/*********************************************************************
  * MPLS_OP_SET
  * DESC   : "Define the outgoing interface and next hop"
  * EXEC   : mpls_out_op_set
@@ -1097,7 +985,7 @@ MPLS_CLEAN_OPCODE_PROTOTYPE(mpls_clean_opcode_set)
 	dst = &nhlfe->dst;
 	memset(&nhlfe->nhlfe_nh, 0, sizeof(struct sockaddr));
 	rcu_read_lock();
-	neigh_release(dst_get_neighbour(dst));
+	neigh_release(dst_get_neighbour_noref(dst));
 	dst_set_neighbour(dst, NULL);
 	rcu_read_unlock();
 
@@ -1238,6 +1126,7 @@ inline MPLS_OPCODE_PROTOTYPE(mpls_op_set_exp)
 
 	unsigned char *exp = data;
 	MPLSCB(*pskb)->exp = *exp;
+	MPLSCB(*pskb)->set_exp = 0x7;
 	MPLS_ENTER;
 	MPLS_EXIT;
 	return MPLS_RESULT_SUCCESS;
@@ -1458,6 +1347,7 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_tc2exp)
 	if (t2ei->t2e[tc] != 0xFF)
 		MPLSCB(*pskb)->exp = t2ei->t2e[tc];
 
+	MPLSCB(*pskb)->set_exp = 0x7;
 	MPLS_EXIT;
 	return MPLS_RESULT_SUCCESS;
 }
@@ -1549,6 +1439,7 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_ds2exp)
 	if (d2ei->d2e[ds] != 0xFF)
 		MPLSCB(*pskb)->exp = d2ei->d2e[ds];
 
+	MPLSCB(*pskb)->set_exp = 0x7;
 	MPLS_EXIT;
 	return MPLS_RESULT_SUCCESS;
 }
@@ -1647,6 +1538,7 @@ inline MPLS_OUT_OPCODE_PROTOTYPE(mpls_out_op_nf2exp)
 	if (n2ei->n2e[nf] != 0xFF)
 		MPLSCB(*pskb)->exp = n2ei->n2e[nf];
 
+	MPLSCB(*pskb)->set_exp = 0x7;
 	MPLS_EXIT;
 	return MPLS_RESULT_SUCCESS;
 }
@@ -1742,8 +1634,8 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.msg     = "DROP",
 	},
 	[MPLS_OP_POP] = {
-			.in      = mpls_in_op_pop,
-			.out     = NULL,
+			.in      = NULL,
+			.out     = mpls_in_op_pop,
 			.build   = mpls_build_opcode_pop,
 			.unbuild = NULL,
 			.cleanup = NULL,
@@ -1751,11 +1643,11 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.msg     = "POP",
 	},
 	[MPLS_OP_PEEK] = {
-			.in      = mpls_in_op_peek,
-			.out     = NULL,
+			.in      = NULL,
+			.out     = mpls_in_op_peek,
 			.build   = mpls_build_opcode_peek,
 			.unbuild = NULL,
-			.cleanup = NULL,
+			.cleanup = mpls_clean_op_peek,
 			.extra   = 0,
 			.msg     = "PEEK",
 	},
@@ -1768,15 +1660,6 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.extra   = 0,
 			.msg     = "PUSH",
 	},
-	[MPLS_OP_DLV] = {
-			.in      = mpls_in_op_dlv,
-			.out     = NULL,
-			.build   = mpls_build_opcode_dlv,
-			.unbuild = NULL,
-			.cleanup = NULL,
-			.extra   = 0,
-			.msg     = "DLV",
-	},
 	[MPLS_OP_FWD] = {
 			.in      = mpls_op_fwd,
 			.out     = NULL,
@@ -1787,6 +1670,10 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.msg     = "FWD",
 	},
 #ifdef CONFIG_NETFILTER
+	/* 	
+	 *	This instr should only be alowed when it is 
+	 *	defined via iproute command
+	 */
 	[MPLS_OP_NF_FWD] = {
 			.in      = NULL,
 			.out     = mpls_out_op_nf_fwd,
@@ -1797,6 +1684,10 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.msg     = "NF_FWD",
 	},
 #endif
+	/* 	
+	 *	This instr should only be alowed when it is 
+	 *	defined via iproute command
+	 */
 	[MPLS_OP_DS_FWD] = {
 			.in      = NULL,
 			.out     = mpls_out_op_ds_fwd,
@@ -1808,21 +1699,12 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 	},
 	[MPLS_OP_EXP_FWD] = {
 			.in      = mpls_op_exp_fwd,
-			.out     = mpls_op_exp_fwd,
+			.out     = NULL,
 			.build   = mpls_build_opcode_exp_fwd,
 			.unbuild = mpls_unbuild_opcode_exp_fwd,
 			.cleanup = mpls_clean_opcode_exp_fwd,
 			.extra   = 0,
 			.msg     = "EXP_FWD",
-	},
-	[MPLS_OP_SET_RX] = {
-			.in      = mpls_in_op_set_rx,
-			.out     = NULL,
-			.build   = mpls_build_opcode_set_rx,
-			.unbuild = mpls_unbuild_opcode_set_rx,
-			.cleanup = mpls_clean_opcode_set_rx,
-			.extra   = 0,
-			.msg     = "SET_RX",
 	},
 	[MPLS_OP_SET] = {
 			.in      = NULL,
@@ -1835,7 +1717,7 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 	},
 #ifdef CONFIG_NET_SCHED
 	[MPLS_OP_SET_TC] = {
-			.in      = mpls_op_set_tc,
+			.in      = NULL,
 			.out     = mpls_op_set_tc,
 			.build   = mpls_build_opcode_set_tc,
 			.unbuild = mpls_unbuild_opcode_set_tc,
@@ -1844,8 +1726,8 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 			.msg     = "SET_TC",
 	},
 	[MPLS_OP_SET_DS] = {
-			.in      = mpls_in_op_set_ds,
-			.out     = NULL,
+			.in      = NULL,
+			.out     = mpls_in_op_set_ds,
 			.build   = mpls_build_opcode_set_ds,
 			.unbuild = mpls_unbuild_opcode_set_ds,
 			.cleanup = mpls_clean_opcode_generic,
@@ -1864,7 +1746,7 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 	},
 #ifdef CONFIG_NET_SCHED
 	[MPLS_OP_EXP2TC] = {
-			.in      = mpls_op_exp2tc,
+			.in      = NULL,
 			.out     = mpls_op_exp2tc,
 			.build   = mpls_build_opcode_exp2tc,
 			.unbuild = mpls_unbuild_opcode_exp2tc,
@@ -1874,8 +1756,8 @@ struct mpls_ops mpls_ops[MPLS_OP_MAX] = {
 	},
 #endif
 	[MPLS_OP_EXP2DS] = {
-			.in      = mpls_in_op_exp2ds,
-			.out     = NULL,
+			.in      = NULL,
+			.out     = mpls_in_op_exp2ds,
 			.build   = mpls_build_opcode_exp2ds,
 			.unbuild = mpls_unbuild_opcode_exp2ds,
 			.cleanup = mpls_clean_opcode_generic,

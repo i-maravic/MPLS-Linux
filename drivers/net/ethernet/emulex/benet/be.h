@@ -40,6 +40,7 @@
 #define OC_NAME			"Emulex OneConnect 10Gbps NIC"
 #define OC_NAME_BE		OC_NAME	"(be3)"
 #define OC_NAME_LANCER		OC_NAME "(Lancer)"
+#define OC_NAME_SH		OC_NAME "(Skyhawk)"
 #define DRV_DESC		"ServerEngines BladeEngine 10Gbps NIC Driver"
 
 #define BE_VENDOR_ID 		0x19a2
@@ -50,6 +51,7 @@
 #define OC_DEVICE_ID2		0x710	/* Device Id for BE3 cards */
 #define OC_DEVICE_ID3		0xe220	/* Device id for Lancer cards */
 #define OC_DEVICE_ID4           0xe228   /* Device id for VF in Lancer */
+#define OC_DEVICE_ID5		0x720	/* Device Id for Skyhawk cards */
 
 static inline char *nic_name(struct pci_dev *pdev)
 {
@@ -63,6 +65,8 @@ static inline char *nic_name(struct pci_dev *pdev)
 		return OC_NAME_LANCER;
 	case BE_DEVICE_ID2:
 		return BE3_NAME;
+	case OC_DEVICE_ID5:
+		return OC_NAME_SH;
 	default:
 		return BE_NAME;
 	}
@@ -288,12 +292,14 @@ struct be_drv_stats {
 };
 
 struct be_vf_cfg {
-	unsigned char vf_mac_addr[ETH_ALEN];
-	int vf_if_handle;
-	int vf_pmac_id;
-	u16 vf_vlan_tag;
-	u32 vf_tx_rate;
+	unsigned char mac_addr[ETH_ALEN];
+	int if_handle;
+	int pmac_id;
+	u16 vlan_tag;
+	u32 tx_rate;
 };
+
+#define BE_FLAGS_LINK_STATUS_INIT		1
 
 struct be_adapter {
 	struct pci_dev *pdev;
@@ -343,6 +349,7 @@ struct be_adapter {
 	struct delayed_work work;
 	u16 work_counter;
 
+	u32 flags;
 	/* Ethtool knobs and info */
 	char fw_ver[FW_VER_LEN];
 	int if_handle;		/* Used to configure filtering */
@@ -368,16 +375,20 @@ struct be_adapter {
 	u32 flash_status;
 	struct completion flash_compl;
 
-	bool be3_native;
-	bool sriov_enabled;
-	struct be_vf_cfg *vf_cfg;
+	u32 num_vfs;
 	u8 is_virtfn;
+	struct be_vf_cfg *vf_cfg;
+	bool be3_native;
 	u32 sli_family;
 	u8 hba_port_num;
 	u16 pvid;
 };
 
 #define be_physfn(adapter) (!adapter->is_virtfn)
+#define	sriov_enabled(adapter)		(adapter->num_vfs > 0)
+#define for_all_vfs(adapter, vf_cfg, i)					\
+	for (i = 0, vf_cfg = &adapter->vf_cfg[i]; i < adapter->num_vfs;	\
+		i++, vf_cfg++)
 
 /* BladeEngine Generation numbers */
 #define BE_GEN2 2
@@ -530,7 +541,7 @@ static inline bool be_error(struct be_adapter *adapter)
 
 extern void be_cq_notify(struct be_adapter *adapter, u16 qid, bool arm,
 		u16 num_popped);
-extern void be_link_status_update(struct be_adapter *adapter, u32 link_status);
+extern void be_link_status_update(struct be_adapter *adapter, u8 link_status);
 extern void be_parse_stats(struct be_adapter *adapter);
 extern int be_load_fw(struct be_adapter *adapter, u8 *func);
 #endif				/* BE_H */

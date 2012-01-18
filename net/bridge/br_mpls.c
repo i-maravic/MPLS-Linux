@@ -40,9 +40,12 @@ static struct neigh_ops dumb_neigh_ops = {
 		.connected_output =     dumb_neigh_dev_xmit,
 };
 
-static __u32 dumb_neigh_hash(const void *pkey, const struct net_device *dev, __u32 hash_rnd)
+static __u32 dumb_neigh_hash(
+		const void *pkey, 
+		const struct net_device *dev,
+		__u32 *hash_rnd)
 {
-	return jhash_2words(*(u32 *)pkey, dev->ifindex, hash_rnd);
+	return jhash_2words(*(u32 *)pkey, dev->ifindex, *hash_rnd);
 }
 
 static int dumb_neigh_constructor(struct neighbour *neigh)
