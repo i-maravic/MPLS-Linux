@@ -185,7 +185,9 @@ static int genl_mpls_ilm_new(struct sk_buff *skb,
 
 	MPLS_ENTER;
 
-	if (!info->attrs[MPLS_ATTR_ILM]) {
+	if (!info->attrs[MPLS_ATTR_ILM] ||
+		(!info->attrs[MPLS_ATTR_INSTR] &&
+		info->nlhdr->nlmsg_flags&NLM_F_CREATE)) {
 		MPLS_EXIT;
 		return -EINVAL;
 	}

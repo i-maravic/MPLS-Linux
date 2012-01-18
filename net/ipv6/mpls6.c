@@ -119,7 +119,7 @@ static inline int mpls6_nexthop_resolve(struct dst_entry *dst, struct sockaddr *
 
 	if (!err){
 		rcu_read_lock();
-		dst_set_neighbour(dst, neigh_clone(dst_get_neighbour(ndst)));
+		dst_set_neighbour(dst, neigh_clone(dst_get_neighbour_noref(ndst)));
 		rcu_read_unlock();
 	}
 
@@ -147,9 +147,9 @@ static struct mpls_prot_driver mpls6_driver = {
 
 static int __init mpls6_init(void)
 {
-	struct mpls_instr_elem instr[2];
+	/*struct mpls_instr_elem instr[2];
 	struct mpls_label ml;
-	struct mpls_ilm *ilm;
+	struct mpls_ilm *ilm;*/
 	int result = mpls_proto_add(&mpls6_driver);
 
 	printk(KERN_INFO "MPLS: IPv6 over MPLS support\n");
@@ -157,7 +157,7 @@ static int __init mpls6_init(void)
 	if (result)
 		return result;
 
-	ml.ml_type = MPLS_LABEL_GEN;
+	/*ml.ml_type = MPLS_LABEL_GEN;
 	ml.u.ml_gen = MPLS_IPV6_EXPLICIT_NULL;
 
 	instr[0].mir_direction = MPLS_IN;
@@ -173,15 +173,15 @@ static int __init mpls6_init(void)
 	if (result) {
 		mpls_ilm_release(ilm);
 		return result;
-	}
+	}*/
 
 	return 0;
 }
 
 static void __exit mpls6_fini(void)
 {
-	struct mpls_ilm *ilm = mpls_del_reserved_label(MPLS_IPV6_EXPLICIT_NULL);
-	mpls_ilm_release(ilm);
+	/*struct mpls_ilm *ilm = mpls_del_reserved_label(MPLS_IPV6_EXPLICIT_NULL);
+	mpls_ilm_release(ilm);*/
 
 	mpls_proto_remove(&mpls6_driver);
 

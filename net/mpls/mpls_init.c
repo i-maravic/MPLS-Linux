@@ -93,35 +93,6 @@ static int mpls_release_netdev_in_nhlfe(struct net_device *dev)
 
 
 /**
- *	mpls_release_netdev_in_ilm - Release the held device if it goes down.
- *	@dev: network device (for which the notification is sent).
- *
- *	ILM objects hold a reference to the 'faked' incoming device (SET_RX op)
- *	data. When the MPLS subsystem is notified that a device is going down
- *	or unregistered, this function destroys the instructions for those ILM
- **/
-
-static int mpls_release_netdev_in_ilm(struct net_device *dev)
-{
-	struct mpls_interface *mif = dev->mpls_ptr;
-	struct list_head *pos = NULL;
-	struct list_head *tmp = NULL;
-	struct mpls_ilm *holder;
-	MPLS_ENTER;
-	/* Iterate all ILM objects present in the list_in of the interface.*/
-	list_for_each_safe(pos, tmp, &mif->list_in) {
-		holder = list_entry(pos, struct mpls_ilm, dev_entry);
-
-		/* Destroy the instruction list */
-		mpls_del_ilm(holder, 0, 0);
-		list_del(pos);
-	}
-
-	MPLS_EXIT;
-	return NOTIFY_DONE;
-}
-
-/**
  *	mpls_change_mtu_nhlfe - Changes nhlfe's mtu dev's changed mtu
  *	@dev: network device (for which the notification is sent).
  *
@@ -181,7 +152,6 @@ static int mpls_netdev_event(struct notifier_block *this,
 	switch (event) {
 	case NETDEV_UNREGISTER:
 	case NETDEV_DOWN:
-		mpls_release_netdev_in_ilm(dev);
 		mpls_release_netdev_in_nhlfe(dev);
 		break;
 	case NETDEV_CHANGEMTU:

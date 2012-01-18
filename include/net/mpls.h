@@ -100,12 +100,6 @@ struct mpls_interface {
 	struct list_head list_out;
 
 	/*
-	 * (any mif object)->list_in is a circular d-linked list. Each node
-	 * of this list is a ILM. ILM's are added to this list when
-	 */
-	struct list_head list_in;
-
-	/*
 	 * Label Space for this interface
 	 */
 	int labelspace;
@@ -117,12 +111,15 @@ struct mpls_interface {
 
 struct mpls_skb_cb {
 	struct mpls_prot_driver *prot;
+	unsigned int context_labelspace:20;
 	unsigned int label:20;
 	unsigned int ttl:8;
 	unsigned int exp:3;
 	unsigned int bos:1;
+	unsigned int set_exp:3;
 	unsigned char flag;
 	unsigned char popped_bos;
+	unsigned char recursion;
 	unsigned char *top_of_stack;
 };
 
@@ -311,7 +308,6 @@ struct mpls_ilm *mpls_get_ilm_by_label(struct mpls_label *label,
 				int labelspace, char bos);
 extern struct mpls_ilm *mpls_ilm_alloc(unsigned int key,
 				struct mpls_label *ml,
-				struct mpls_instr_elem *instr,
 				int instr_len);
 
 

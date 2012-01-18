@@ -32,7 +32,6 @@
 #include <net/ipv6.h>
 #endif
 #include <net/mpls.h>
-#include <net/xfrm.h>
 
 
 /**
@@ -58,8 +57,6 @@ static int mpls_input(struct sk_buff *skb, struct net_device *dev,
 	int retval, packet_length = skb->len;
 
 	MPLS_ENTER;
-
-mpls_input_start:
 
 	MPLS_DEBUG("labelspace=%d,label=%d,exp=%01x,B.O.S=%d,TTL=%d\n",
 			labelspace, cb->label, cb->exp, cb->bos, cb->ttl);
@@ -88,26 +85,18 @@ mpls_input_start:
 		}
 
 		switch (func(&skb, ilm, &nhlfe, data)) {
-		case MPLS_RESULT_RECURSE:
-			label->ml_type = MPLS_LABEL_GEN;
-			label->u.ml_gen = MPLSCB(skb)->label;
-
-			/* drop the previous ILM */
-			mpls_ilm_release(ilm);
-
-			goto mpls_input_start;
-		case MPLS_RESULT_DLV:
-			goto mpls_input_dlv;
 		case MPLS_RESULT_FWD:
 			goto mpls_input_fwd;
 		case MPLS_RESULT_DROP:
+		case MPLS_RESULT_DLV:
+		case MPLS_RESULT_RECURSE:
 			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
 			goto mpls_input_drop;
 		case MPLS_RESULT_SUCCESS:
 			break;
 		}
 	}
-	MPLS_DEBUG("finished executing in label program without DLV or FWD\n");
+	MPLS_DEBUG("finished executing in label program without FWD\n");
 
 	/* fall through to drop */
 
@@ -120,44 +109,10 @@ mpls_input_drop:
 	MPLS_EXIT;
 	return NET_RX_DROP;
 
-mpls_input_dlv:
-	secpath_reset(skb);
-	skb->mac_header = skb->network_header;
-	skb_reset_network_header(skb);
-	if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
-		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
-		goto mpls_input_drop;
-	}
-
-	if (ip_hdr(skb)->version == 4)
-		skb->protocol = htons(ETH_P_IP);
-	else if (ip_hdr(skb)->version == 6)
-		skb->protocol = htons(ETH_P_IPV6);
-	else {
-		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
-		goto mpls_input_drop;
-	}
-
-	skb->pkt_type = PACKET_HOST;
-	__skb_tunnel_rx(skb, dev);
-
-	mpls_ilm_release(ilm);
-
-	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
-	MPLS_ADD_STATS_BH(dev_net(dev), MPLS_MIB_INOCTETS, packet_length);
-
-	netif_receive_skb(skb);
-
-	MPLS_DEBUG("delivering\n");
-	MPLS_EXIT;
-	return NET_RX_SUCCESS;
-
 mpls_input_fwd:
 	/* We are about to mangle packet. Copy it! */
-	if (skb_cow(skb,
-		LL_RESERVED_SPACE(nhlfe->dst.dev) +
-		nhlfe->dst.header_len)) {
-
+	if (skb_cow(skb, 
+			LL_RESERVED_SPACE(nhlfe->dst.dev) +	nhlfe->dst.header_len)) {
 		printk_ratelimited(KERN_ERR "MPLS: unable to cow skb\n");
 		MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
 		goto mpls_input_drop;
@@ -180,7 +135,7 @@ mpls_input_fwd:
 		 */
 	}
 
-	cb->label = 0;
+	/*cb->label = 0;
 	cb->exp = 0;
 	cb->flag = 0;
 
@@ -190,7 +145,7 @@ mpls_input_fwd:
 	} else {
 		cb->bos = 0;
 		skb->protocol = htons(ETH_P_MPLS_UC);
-	}
+	}*/
 
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
 	MPLS_ADD_STATS_BH(dev_net(dev),
@@ -240,7 +195,11 @@ int mpls_skb_recv(struct sk_buff *skb,
 	if (!pskb_may_pull(skb, MPLS_HDR_LEN))
 		goto mpls_rcv_err;
 
-	labelspace = mip ? mip->labelspace : -1;
+	if (cb->recursion)
+		labelspace = cb->context_labelspace;
+	else
+		labelspace = mip ? mip->labelspace : -1;
+
 	if (unlikely(labelspace < 0)) {
 		MPLS_DEBUG("dev %s has no labelspace, dropped!\n", dev->name);
 		MPLS_INC_STATS_BH(dev_net(dev),
