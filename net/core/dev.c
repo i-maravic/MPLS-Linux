@@ -137,6 +137,10 @@
 #include <linux/jump_label.h>
 #include <net/flow_keys.h>
 
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
+
 #include "net-sysfs.h"
 
 /* Instead of increasing this, you should create a hash table. */
@@ -4789,6 +4793,48 @@ int dev_set_mtu(struct net_device *dev, int new_mtu)
 	return err;
 }
 EXPORT_SYMBOL(dev_set_mtu);
+
+#if IS_ENABLED(CONFIG_MPLS)
+/**
+ *	dev_set_label_space - Change maximum transfer unit
+ *	@dev: device
+ *	@new_label_space: new MPLS label space for device
+ *
+ *	Change the MPLS label space of the network device.
+ */
+int dev_set_label_space(struct net_device *dev, 
+			int new_label_space)
+{
+	struct mpls_interface *mif = dev->mpls_ptr;
+	int err;
+
+	if (!mif) {
+		pr_debug("This is not MPLS enabled kernel!");
+		return 0;
+	}
+
+	if (mif->labelspace == new_label_space)
+		return 0;
+
+	/*	Label space must be positive.	 
+	 *	Value of -1 is used for reseting 
+	 *	label space on device.		 */
+	if (new_label_space < -2)
+		return -EINVAL;
+
+	if (!netif_device_present(dev))
+		return -ENODEV;
+
+	BUG_ON(!mif->set_label_space);
+	err = mif->set_label_space(dev, new_label_space);
+
+	if (!err && dev->flags & IFF_UP)
+		call_netdevice_notifiers(NETDEV_CHANGE_LAB_SPACE,
+			dev);
+	return err;
+}
+EXPORT_SYMBOL(dev_set_label_space);
+#endif /*CONFIG_MPLS*/
 
 /**
  *	dev_set_group - Change group this device belongs to

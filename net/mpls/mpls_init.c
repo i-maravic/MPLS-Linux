@@ -22,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
+#include <linux/rtnetlink.h>
 #include <net/dst.h>
 #include <net/mpls.h>
 #include <net/ip.h>
@@ -75,6 +76,7 @@ static int mpls_release_netdev_in_nhlfe(struct net_device *dev)
 	struct list_head *tmp = NULL;
 	struct mpls_nhlfe *holder;
 	MPLS_ENTER;
+	BUG_ON(!mif);
 	/* Iterate all NHLFE objects present in the list_out of the interface.*/
 	list_for_each_safe(pos, tmp, &mif->list_out) {
 
@@ -106,6 +108,7 @@ static int mpls_change_mtu_nhlfe(struct net_device *dev)
 	struct list_head *tmp = NULL;
 	struct mpls_nhlfe *holder;
 	MPLS_ENTER;
+	BUG_ON(!mif);
 	/* Iterate all NHLFE objects present in the list_out of the interface.*/
 	list_for_each_safe(pos, tmp, &mif->list_out) {
 
@@ -134,23 +137,23 @@ static int mpls_netdev_event(struct notifier_block *this,
 		unsigned long event, void *ptr)
 {
 	struct net_device *dev = ptr;
-	struct mpls_interface *mif = dev->mpls_ptr;
+
 	MPLS_ENTER;
-	if (!mif) {
-		MPLS_EXIT;
-		return NOTIFY_DONE;
-	}
 
 	/*
 	 * Only continue for MPLS enabled interfaces
 	 */
-	if (!mif) {
-		MPLS_EXIT;
-		return NOTIFY_DONE;
-	}
 
 	switch (event) {
+	case NETDEV_REGISTER:
+		mpls_initialize_dev(dev);
+		if (!dev->mpls_ptr)
+			return notifier_from_errno(-ENOMEM);
+		break;
 	case NETDEV_UNREGISTER:
+		mpls_release_netdev_in_nhlfe(dev);
+		mpls_clear_dev(dev);
+		break;
 	case NETDEV_DOWN:
 		mpls_release_netdev_in_nhlfe(dev);
 		break;
@@ -263,6 +266,7 @@ static int __init mpls_init_module(void)
 	err = register_netdevice_notifier(&mpls_netdev_notifier);
 	if (err)
 		goto cleanup_all;
+
 	MPLS_EXIT;
 	return 0;
 cleanup_all:

@@ -100,6 +100,12 @@ struct mpls_interface {
 	struct list_head list_out;
 
 	/*
+	 * Function for setting label space
+	 * Must be referenced when this struct is allocated
+	 */
+	int (*set_label_space)(struct net_device *dev, int labelspace);
+
+	/*
 	 * Label Space for this interface
 	 */
 	int labelspace;
@@ -266,6 +272,14 @@ static inline void mpls_proto_release(struct mpls_prot_driver *prot)
 	module_put(prot->owner);
 	prot = NULL;
 }
+
+/****************************************************************
+ * MPLS label space handling method
+ * net/mpls/mpls_if.c
+ ******************************************************************/
+void mpls_initialize_dev(struct net_device *dev);
+
+void mpls_clear_dev(struct net_device *dev);
 
 /****************************************************************************
  * MPLS INPUT INFO (ILM) OBJECT MANAGEMENT

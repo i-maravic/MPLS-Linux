@@ -33,34 +33,64 @@
 #include <net/mpls.h>
 #include <linux/genetlink.h>
 #include <net/net_namespace.h>
+#include <linux/hardirq.h>
 
 /**
  *	mpls_create_if_info - allocate memory for the MPLS net_device extension
  *
  *	See struct net_device and  "void *mpls_ptr; // MPLS specific data"
  *	Returns a pointer to the allocated struct.
- *	RCAS: From process context only. May sleep.
  **/
 
-static struct mpls_interface *mpls_create_if_info(void)
+static int __mpls_set_labelspace(struct net_device *dev, int labelspace)
 {
-	struct mpls_interface *mif =
-		kzalloc(sizeof(struct mpls_interface), GFP_KERNEL);
+	struct mpls_interface *mif = dev->mpls_ptr;
+
 	MPLS_ENTER;
+	BUG_ON(!mif);
+
+	mif->labelspace = labelspace;
+
+	MPLS_DEBUG("Set labelspace for %s to %d\n",
+			dev->name, labelspace);
+
+	MPLS_EXIT;
+	return 0;
+}
+
+void mpls_initialize_dev(struct net_device *dev)
+{
+	struct mpls_interface *mif;
+	MPLS_ENTER;
+
+	BUG_ON(dev->mpls_ptr);
+	mif = kzalloc(sizeof(struct mpls_interface), GFP_KERNEL);
+
 	if (unlikely(!mif)) {
 		MPLS_EXIT;
 		return NULL;
 	}
 
+	mif->set_label_space = __mpls_set_labelspace;
 	mif->labelspace = -1;
 	INIT_LIST_HEAD(&mif->list_out);
+
+	dev->mpls_ptr = mif;
+
 	MPLS_EXIT;
-	return mif;
 }
 
+void mpls_clear_dev(struct net_device *dev)
+{
+	struct mpls_interface *mif = dev->mpls_ptr;
+	MPLS_ENTER;
+	kfree(mif);
+	mif = NULL;
+	MPLS_EXIT;
+}
 
 /**
- *	__mpls_set_labelspace - Set a label space for the interface.
+ *	__mpls_set_labelspace_netlink - Set a label space for the interface.
  *	@dev: device
  *	@labelspace: new labelspace
  *
@@ -68,38 +98,17 @@ static struct mpls_interface *mpls_create_if_info(void)
  *	Returns 0 on success.
  **/
 
-static int __mpls_set_labelspace(struct net_device *dev,
+static int __mpls_set_labelspace_netlink(struct net_device *dev,
 		int labelspace, int seq, int pid)
 {
-	struct mpls_interface *mif = dev->mpls_ptr;
 	int err;
 
 	MPLS_ENTER;
-	if (!mif && labelspace != -1) {
-		mif = mpls_create_if_info();
-		if (unlikely(!mif)) {
-			MPLS_DEBUG("Err: Set labelspace for %s to %d\n",
-					dev->name, labelspace);
-			MPLS_EXIT;
-			return -ENOMEM;
-		}
-		/* Actual assignment happens here */
-		mif->labelspace = labelspace;
+	err = __mpls_set_labelspace(dev, labelspace);
 
-		dev->mpls_ptr = (void *)mif;
-		MPLS_DEBUG("Set labelspace for %s to %d\n",
-				dev->name, labelspace);
-	} else {
-		if (labelspace == -1) {
-			MPLS_DEBUG("Resetting labelspace for %s to %d\n",
-					dev->name, -1);
-			kfree(dev->mpls_ptr);
-			dev->mpls_ptr = NULL;
-		} else {
-			mif->labelspace = labelspace;
-		}
+	if (err < 0)
+		return err;
 
-	}
 	err = mpls_labelspace_event(MPLS_GRP_LABELSPACE_NAME,
 		MPLS_CMD_SETLABELSPACE, dev, seq, pid);
 	MPLS_EXIT;
@@ -127,7 +136,7 @@ int mpls_set_labelspace(struct mpls_labelspace_req *req, int seq, int pid)
 
 	MPLS_ENTER;
 	if (dev) {
-		result = __mpls_set_labelspace(dev,
+		result = __mpls_set_labelspace_netlink(dev,
 			req->mls_labelspace, seq, pid);
 		dev_put(dev);
 	}

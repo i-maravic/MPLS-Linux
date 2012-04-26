@@ -137,6 +137,7 @@ enum {
 	IFLA_AF_SPEC,
 	IFLA_GROUP,		/* Group the device belongs to */
 	IFLA_NET_NS_FD,
+	IFLA_LABSPACE,		/* MPLS label space this dev belongs to */
 	__IFLA_MAX
 };
 

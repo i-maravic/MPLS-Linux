@@ -53,6 +53,10 @@
 #include <net/rtnetlink.h>
 #include <net/net_namespace.h>
 
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
+
 struct rtnl_link {
 	rtnl_doit_func		doit;
 	rtnl_dumpit_func	dumpit;
@@ -782,6 +786,9 @@ static noinline size_t if_nlmsg_size(const struct net_device *dev)
 	       + nla_total_size(4) /* IFLA_MTU */
 	       + nla_total_size(4) /* IFLA_LINK */
 	       + nla_total_size(4) /* IFLA_MASTER */
+#if IS_ENABLED(CONFIG_MPLS)
+	       + nla_total_size(4) /* IFLA_LABSPACE */
+#endif
 	       + nla_total_size(1) /* IFLA_OPERSTATE */
 	       + nla_total_size(1) /* IFLA_LINKMODE */
 	       + nla_total_size(4) /* IFLA_NUM_VF */
@@ -897,6 +904,14 @@ static int rtnl_fill_ifinfo(struct sk_buff *skb, struct net_device *dev,
 	NLA_PUT_U8(skb, IFLA_LINKMODE, dev->link_mode);
 	NLA_PUT_U32(skb, IFLA_MTU, dev->mtu);
 	NLA_PUT_U32(skb, IFLA_GROUP, dev->group);
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (dev->mpls_ptr) {
+		struct mpls_interface *mif = dev->mpls_ptr;
+		NLA_PUT_U32(skb, IFLA_LABSPACE, 
+			(u32) mif->labelspace);
+	}
+#endif
 
 	if (dev->ifindex != dev->iflink)
 		NLA_PUT_U32(skb, IFLA_LINK, dev->iflink);
@@ -1095,6 +1110,9 @@ const struct nla_policy ifla_policy[IFLA_MAX+1] = {
 	[IFLA_LINKINFO]		= { .type = NLA_NESTED },
 	[IFLA_NET_NS_PID]	= { .type = NLA_U32 },
 	[IFLA_NET_NS_FD]	= { .type = NLA_U32 },
+#if IS_ENABLED(CONFIG_MPLS)
+	[IFLA_LABSPACE]		= { .type = NLA_U32 },
+#endif
 	[IFLA_IFALIAS]	        = { .type = NLA_STRING, .len = IFALIASZ-1 },
 	[IFLA_VFINFO_LIST]	= {. type = NLA_NESTED },
 	[IFLA_VF_PORTS]		= { .type = NLA_NESTED },
@@ -1363,6 +1381,15 @@ static int do_setlink(struct net_device *dev, struct ifinfomsg *ifm,
 			goto errout;
 		modified = 1;
 	}
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (tb[IFLA_LABSPACE]) {
+		err = dev_set_label_space(dev, nla_get_u32(tb[IFLA_LABSPACE]));
+		if (err < 0)
+			goto errout;
+		modified = 1;
+	}
+#endif
 
 	if (tb[IFLA_GROUP]) {
 		dev_set_group(dev, nla_get_u32(tb[IFLA_GROUP]));
@@ -1651,6 +1678,10 @@ struct net_device *rtnl_create_link(struct net *src_net, struct net *net,
 		dev->link_mode = nla_get_u8(tb[IFLA_LINKMODE]);
 	if (tb[IFLA_GROUP])
 		dev_set_group(dev, nla_get_u32(tb[IFLA_GROUP]));
+#if IS_ENABLED(CONFIG_MPLS)
+	if (tb[IFLA_LABSPACE])
+		dev_set_label_space(dev, nla_get_u32(tb[IFLA_LABSPACE]));
+#endif
 
 	return dev;
 
