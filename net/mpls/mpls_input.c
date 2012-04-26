@@ -182,6 +182,7 @@ int mpls_skb_recv(struct sk_buff *skb,
 	struct mpls_interface *mip = dev->mpls_ptr;
 
 	MPLS_ENTER;
+	BUG_ON(!mip);
 
 	if (skb->pkt_type == PACKET_OTHERHOST)
 		goto mpls_rcv_drop;
@@ -198,7 +199,7 @@ int mpls_skb_recv(struct sk_buff *skb,
 	if (cb->recursion)
 		labelspace = cb->context_labelspace;
 	else
-		labelspace = mip ? mip->labelspace : -1;
+		labelspace = mip->labelspace;
 
 	if (unlikely(labelspace < 0)) {
 		MPLS_DEBUG("dev %s has no labelspace, dropped!\n", dev->name);
