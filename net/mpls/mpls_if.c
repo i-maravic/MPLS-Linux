@@ -63,12 +63,18 @@ void mpls_initialize_dev(struct net_device *dev)
 	struct mpls_interface *mif;
 	MPLS_ENTER;
 
-	BUG_ON(dev->mpls_ptr);
+	/*
+	 * Only temporary to avoid crash when device is transfered to another namespace
+	 */
+	if (dev->mpls_ptr)
+		kfree(dev->mpls_ptr);
+
 	mif = kzalloc(sizeof(struct mpls_interface), GFP_KERNEL);
 
 	if (unlikely(!mif)) {
 		MPLS_EXIT;
-		return NULL;
+		dev->mpls_ptr = NULL;
+		return;
 	}
 
 	mif->set_label_space = __mpls_set_labelspace;
