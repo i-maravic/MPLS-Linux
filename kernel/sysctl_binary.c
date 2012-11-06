@@ -701,6 +701,13 @@ static const struct bin_table bin_net_netfilter_table[] = {
 	{}
 };
 
+static const struct bin_table bin_net_mpls_table[] = {
+       { CTL_INT, NET_MPLS_DEFAULT_TTL,		"default_ttl" },
+       { CTL_INT, NET_MPLS_PROPAGATE_TTL,	"propagate_ttl" },
+       { CTL_INT, NET_MPLS_PROPAGATE_TC,	"propagate_tc" },
+       {}
+};
+
 static const struct bin_table bin_net_irda_table[] = {
 	{ CTL_INT,	NET_IRDA_DISCOVERY,		"discovery" },
 	{ CTL_STR,	NET_IRDA_DEVNAME,		"devname" },
@@ -740,6 +747,7 @@ static const struct bin_table bin_net_table[] = {
 	{ CTL_DIR,	NET_LLC,		"llc",		bin_net_llc_table },
 	{ CTL_DIR,	NET_NETFILTER,		"netfilter",	bin_net_netfilter_table },
 	/* NET_DCCP "dccp" no longer used */
+	{ CTL_DIR,	NET_MPLS,		"mpls",		bin_net_mpls_table },
 	{ CTL_DIR,	NET_IRDA,		"irda",		bin_net_irda_table },
 	{ CTL_INT,	2089,			"nf_conntrack_max" },
 	{}
