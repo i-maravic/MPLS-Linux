@@ -74,6 +74,36 @@ config INET
 
 	  Short answer: say Y.
 
+config MPLS
+       tristate "Multiprotocol Label Switching(MPLS)"
+       depends on INET
+       ---help---
+         In conventional IP forwarding, a particular router will typically
+         consider two packets to be in the same FEC if there is some address
+         prefix X in that router's routing tables such that X is the "longest
+         match" for each packet's destination address. As the packet
+         traverses the network, each hop in turn reexamines the packet and
+         assigns it to a FEC.
+
+         In MPLS, the assignment of a particular packet to a particular FEC is
+         done just once, as the packet enters the MPLS tunnel. The FEC to which
+         the packet is assigned is encoded as a short fixed length value known
+         as a "label". When a packet is forwarded to its next hop, the label
+         is sent along with it. To be more precise, the packets are "labeled"
+         before they are forwarded.
+
+         At subsequent hops, there is no further analysis of the packet's
+         network layer header. Rather, the label is used as an index into a
+         table which specifies the next hop, and a new label. The old label
+         is replaced with the new label, and the packet is forwarded to its
+         next hop.
+
+         In the MPLS forwarding paradigm, once a packet is assigned to a FEC,
+         no further header analysis is done by subsequent routers. All
+         forwarding is driven by the labels.
+
+         If unsure, say N.
+
 if INET
 source "net/ipv4/Kconfig"
 source "net/ipv6/Kconfig"
