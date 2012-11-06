@@ -282,4 +282,25 @@ enum
 	__LINUX_MIB_XFRMMAX
 };
 
+/* MPLS mib definitions */
+/* RFC 3813 */
+enum
+{
+	MPLS_MIB_NUM = 0,
+	/* interface statistics */
+	MPLS_MIB_IFINLABELLOOKUPFAILURES,	/* mplsInterfacePerfInLabelLookupFailures */
+	MPLS_MIB_IFOUTFRAGMENTEDPKTS,		/* mplsInterfacePerfOutFragmentedPkts */
+	/* IN segment statistics */
+	MPLS_MIB_INOCTETS,		/* mplsInSegmentPerfOctets */
+	MPLS_MIB_INPACKETS,		/* mplsInSegmentPerfPackets */
+	MPLS_MIB_INERRORS,		/* mplsInSegmentPerfErrors */
+	MPLS_MIB_INDISCARDS,	/* mplsInSegmentPerfDiscards */
+	/* OUT segment statistics */
+	MPLS_MIB_OUTOCTETS,		/* mplsOutSegmentPerfOctets  */
+	MPLS_MIB_OUTPACKETS,	/* mplsOutSegmentPerfPackets  */
+	MPLS_MIB_OUTERRORS,		/* mplsOutSegmentPerfErrors  */
+	MPLS_MIB_OUTDISCARDS,	/* mplsOutSegmentPerfDiscards  */
+	__MPLS_MIB_MAX
+};
+
 #endif	/* _LINUX_SNMP_H */
