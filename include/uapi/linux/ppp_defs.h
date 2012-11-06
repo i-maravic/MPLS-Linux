@@ -52,7 +52,7 @@
 #define PPP_IPV6CP	0x8057	/* IPv6 Control Protocol */
 #define PPP_CCPFRAG	0x80fb	/* CCP at link level (below MP bundle) */
 #define PPP_CCP		0x80fd	/* Compression Control Protocol */
-#define PPP_MPLSCP	0x80fd	/* MPLS Control Protocol */
+#define PPP_MPLSCP	0x8281	/* MPLS Control Protocol */
 #define PPP_LCP		0xc021	/* Link Control Protocol */
 #define PPP_PAP		0xc023	/* Password Authentication Protocol */
 #define PPP_LQR		0xc025	/* Link Quality Report protocol */
@@ -98,7 +98,7 @@ struct pppstat	{
     __u32	ppp_obytes;	/* raw bytes sent */
     __u32	ppp_ooctects;	/* frame bytes sent */
     __u32	ppp_opackets;	/* packets sent */
-    __u32	ppp_oerrors;	/* transmit errors */ 
+    __u32	ppp_oerrors;	/* transmit errors */
     __u32	ppp_olqrs;	/* # LQR frames sent */
 };
 
