@@ -110,6 +110,9 @@ struct neighbour {
 	seqlock_t		ha_lock;
 	unsigned char		ha[ALIGN(MAX_ADDR_LEN, sizeof(unsigned long))];
 	struct hh_cache		hh;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct hh_cache		hh_mpls;
+#endif
 	int			(*output)(struct neighbour *, struct sk_buff *);
 	const struct neigh_ops	*ops;
 	struct rcu_head		rcu;

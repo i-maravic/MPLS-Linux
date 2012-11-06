@@ -1033,9 +1033,19 @@ out_unlock_bh:
 }
 EXPORT_SYMBOL(__neigh_event_send);
 
+static void neigh_update_hh(struct neighbour *neigh, struct hh_cache *hh,
+			    void (*update)(struct hh_cache*, const struct net_device*, const unsigned char *))
+{
+	if (!hh->hh_len)
+		return;
+
+	write_seqlock_bh(&hh->hh_lock);
+	update(hh, neigh->dev, neigh->ha);
+	write_sequnlock_bh(&hh->hh_lock);
+}
+
 static void neigh_update_hhs(struct neighbour *neigh)
 {
-	struct hh_cache *hh;
 	void (*update)(struct hh_cache*, const struct net_device*, const unsigned char *)
 		= NULL;
 
@@ -1043,12 +1053,10 @@ static void neigh_update_hhs(struct neighbour *neigh)
 		update = neigh->dev->header_ops->cache_update;
 
 	if (update) {
-		hh = &neigh->hh;
-		if (hh->hh_len) {
-			write_seqlock_bh(&hh->hh_lock);
-			update(hh, neigh->dev, neigh->ha);
-			write_sequnlock_bh(&hh->hh_lock);
-		}
+		neigh_update_hh(neigh, &neigh->hh, update);
+#if IS_ENABLED(CONFIG_MPLS)
+		neigh_update_hh(neigh, &neigh->hh_mpls, update);
+#endif
 	}
 }
 
@@ -1250,12 +1258,9 @@ struct neighbour *neigh_event_ns(struct neigh_table *tbl,
 EXPORT_SYMBOL(neigh_event_ns);
 
 /* called with read_lock_bh(&n->lock); */
-static void neigh_hh_init(struct neighbour *n, struct dst_entry *dst)
+static void neigh_hh_init(struct neighbour *n, struct hh_cache *hh,
+			  struct net_device *dev, __be16 prot)
 {
-	struct net_device *dev = dst->dev;
-	__be16 prot = dst->ops->protocol;
-	struct hh_cache	*hh = &n->hh;
-
 	write_lock_bh(&n->lock);
 
 	/* Only one thread can come in here and initialize the
@@ -1302,8 +1307,15 @@ int neigh_resolve_output(struct neighbour *neigh, struct sk_buff *skb)
 		struct net_device *dev = neigh->dev;
 		unsigned int seq;
 
-		if (dev->header_ops->cache && !neigh->hh.hh_len)
-			neigh_hh_init(neigh, dst);
+		if (dev->header_ops->cache) {
+			struct hh_cache *hh = &neigh->hh;
+#if IS_ENABLED(CONFIG_MPLS)
+			if (skb->protocol == htons(ETH_P_MPLS_UC))
+				hh = &neigh->hh_mpls;
+#endif
+			if (!hh->hh_len)
+				neigh_hh_init(neigh, hh, dev, skb->protocol);
+		}
 
 		do {
 			__skb_pull(skb, skb_network_offset(skb));

@@ -397,11 +397,9 @@ static inline void dst_confirm(struct dst_entry *dst)
 	dst->pending_confirm = 1;
 }
 
-static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
-				   struct sk_buff *skb)
+static inline int __dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
+				     struct sk_buff *skb, const struct hh_cache *hh)
 {
-	const struct hh_cache *hh;
-
 	if (dst->pending_confirm) {
 		unsigned long now = jiffies;
 
@@ -411,11 +409,16 @@ static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
 			n->confirmed = now;
 	}
 
-	hh = &n->hh;
 	if ((n->nud_state & NUD_CONNECTED) && hh->hh_len)
 		return neigh_hh_output(hh, skb);
 	else
 		return n->output(n, skb);
+}
+
+static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
+				   struct sk_buff *skb)
+{
+	return __dst_neigh_output(dst, n, skb, &n->hh);
 }
 
 static inline struct neighbour *dst_neigh_lookup(const struct dst_entry *dst, const void *daddr)
