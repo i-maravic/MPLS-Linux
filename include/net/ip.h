@@ -140,20 +140,20 @@ static inline struct sk_buff *ip_finish_skb(struct sock *sk, struct flowi4 *fl4)
 }
 
 /* datagram.c */
-extern int		ip4_datagram_connect(struct sock *sk, 
+extern int		ip4_datagram_connect(struct sock *sk,
 					     struct sockaddr *uaddr, int addr_len);
 
 extern void ip4_datagram_release_cb(struct sock *sk);
 
 struct ip_reply_arg {
-	struct kvec iov[1];   
+	struct kvec iov[1];
 	int	    flags;
 	__wsum 	    csum;
 	int	    csumoffset; /* u16 offset of csum in iov[0].iov_base */
-				/* -1 if not needed */ 
+				/* -1 if not needed */
 	int	    bound_dev_if;
 	u8  	    tos;
-}; 
+};
 
 #define IP_REPLY_ARG_NOSRCCHECK 1
 
@@ -413,13 +413,13 @@ int ip_frag_nqueues(struct net *net);
 /*
  *	Functions provided by ip_forward.c
  */
- 
+
 extern int ip_forward(struct sk_buff *skb);
- 
+
 /*
  *	Functions provided by ip_options.c
  */
- 
+
 extern void ip_options_build(struct sk_buff *skb, struct ip_options *opt,
 			     __be32 daddr, struct rtable *rt, int is_frag);
 extern int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb);
@@ -451,7 +451,7 @@ extern int	compat_ip_getsockopt(struct sock *sk, int level,
 extern int	ip_ra_control(struct sock *sk, unsigned char on, void (*destructor)(struct sock *));
 
 extern int 	ip_recv_error(struct sock *sk, struct msghdr *msg, int len);
-extern void	ip_icmp_error(struct sock *sk, struct sk_buff *skb, int err, 
+extern void	ip_icmp_error(struct sock *sk, struct sk_buff *skb, int err,
 			      __be16 port, u32 info, u8 *payload);
 extern void	ip_local_error(struct sock *sk, int err, __be32 daddr, __be16 dport,
 			       u32 info);

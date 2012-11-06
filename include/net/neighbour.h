@@ -215,7 +215,7 @@ static inline struct neighbour *neigh_create(struct neigh_table *tbl,
 }
 extern void			neigh_destroy(struct neighbour *neigh);
 extern int			__neigh_event_send(struct neighbour *neigh, struct sk_buff *skb);
-extern int			neigh_update(struct neighbour *neigh, const u8 *lladdr, u8 new, 
+extern int			neigh_update(struct neighbour *neigh, const u8 *lladdr, u8 new,
 					     u32 flags);
 extern void			neigh_changeaddr(struct neigh_table *tbl, struct net_device *dev);
 extern int			neigh_ifdown(struct neigh_table *tbl, struct net_device *dev);
@@ -274,7 +274,7 @@ extern void *neigh_seq_start(struct seq_file *, loff_t *, struct neigh_table *, 
 extern void *neigh_seq_next(struct seq_file *, void *, loff_t *);
 extern void neigh_seq_stop(struct seq_file *, void *);
 
-extern int			neigh_sysctl_register(struct net_device *dev, 
+extern int			neigh_sysctl_register(struct net_device *dev,
 						      struct neigh_parms *p,
 						      char *p_name,
 						      proc_handler *proc_handler);
@@ -313,7 +313,7 @@ static inline struct neighbour * neigh_clone(struct neighbour *neigh)
 static inline int neigh_event_send(struct neighbour *neigh, struct sk_buff *skb)
 {
 	unsigned long now = jiffies;
-	
+
 	if (neigh->used != now)
 		neigh->used = now;
 	if (!(neigh->nud_state&(NUD_CONNECTED|NUD_DELAY|NUD_PROBE)))

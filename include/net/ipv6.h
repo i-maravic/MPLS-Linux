@@ -52,7 +52,7 @@
 
 /*
  *	Addr type
- *	
+ *
  *	type	-	unicast | multicast
  *	scope	-	local	| site	    | global
  *	v4	-	compat
@@ -63,8 +63,8 @@
 
 #define IPV6_ADDR_ANY		0x0000U
 
-#define IPV6_ADDR_UNICAST      	0x0001U	
-#define IPV6_ADDR_MULTICAST    	0x0002U	
+#define IPV6_ADDR_UNICAST      	0x0001U
+#define IPV6_ADDR_MULTICAST    	0x0002U
 
 #define IPV6_ADDR_LOOPBACK	0x0010U
 #define IPV6_ADDR_LINKLOCAL	0x0020U
@@ -344,7 +344,7 @@ ipv6_masked_addr_cmp(const struct in6_addr *a1, const struct in6_addr *m,
 #endif
 }
 
-static inline void ipv6_addr_prefix(struct in6_addr *pfx, 
+static inline void ipv6_addr_prefix(struct in6_addr *pfx,
 				    const struct in6_addr *addr,
 				    int plen)
 {
@@ -378,7 +378,7 @@ static inline void __ipv6_addr_set_half(__be32 *addr,
 	addr[1] = wl;
 }
 
-static inline void ipv6_addr_set(struct in6_addr *addr, 
+static inline void ipv6_addr_set(struct in6_addr *addr,
 				     __be32 w1, __be32 w2,
 				     __be32 w3, __be32 w4)
 {
@@ -585,7 +585,7 @@ static inline int __ipv6_addr_diff32(const void *token1, const void *token2, int
 	}
 
 	/*
-	 *	we should *never* get to this point since that 
+	 *	we should *never* get to this point since that
 	 *	would mean the addrs are equal
 	 *
 	 *	However, we do get to it 8) And exacly, when
@@ -659,8 +659,8 @@ static inline __be32 ip6_flowinfo(const struct ipv6hdr *hdr)
  *	rcv function (called from netdevice level)
  */
 
-extern int			ipv6_rcv(struct sk_buff *skb, 
-					 struct net_device *dev, 
+extern int			ipv6_rcv(struct sk_buff *skb,
+					 struct net_device *dev,
 					 struct packet_type *pt,
 					 struct net_device *orig_dev);
 
@@ -757,13 +757,13 @@ extern struct in6_addr *fl6_update_dst(struct flowi6 *fl6,
  *	socket options (ipv6_sockglue.c)
  */
 
-extern int			ipv6_setsockopt(struct sock *sk, int level, 
+extern int			ipv6_setsockopt(struct sock *sk, int level,
 						int optname,
-						char __user *optval, 
+						char __user *optval,
 						unsigned int optlen);
-extern int			ipv6_getsockopt(struct sock *sk, int level, 
+extern int			ipv6_getsockopt(struct sock *sk, int level,
 						int optname,
-						char __user *optval, 
+						char __user *optval,
 						int __user *optlen);
 extern int			compat_ipv6_setsockopt(struct sock *sk,
 						int level,
@@ -776,7 +776,7 @@ extern int			compat_ipv6_getsockopt(struct sock *sk,
 						char __user *optval,
 						int __user *optlen);
 
-extern int			ip6_datagram_connect(struct sock *sk, 
+extern int			ip6_datagram_connect(struct sock *sk,
 						     struct sockaddr *addr, int addr_len);
 
 extern int 			ipv6_recv_error(struct sock *sk, struct msghdr *msg, int len);
@@ -787,11 +787,11 @@ extern void			ipv6_local_error(struct sock *sk, int err, struct flowi6 *fl6, u32
 extern void			ipv6_local_rxpmtu(struct sock *sk, struct flowi6 *fl6, u32 mtu);
 
 extern int inet6_release(struct socket *sock);
-extern int inet6_bind(struct socket *sock, struct sockaddr *uaddr, 
+extern int inet6_bind(struct socket *sock, struct sockaddr *uaddr,
 		      int addr_len);
 extern int inet6_getname(struct socket *sock, struct sockaddr *uaddr,
 			 int *uaddr_len, int peer);
-extern int inet6_ioctl(struct socket *sock, unsigned int cmd, 
+extern int inet6_ioctl(struct socket *sock, unsigned int cmd,
 		       unsigned long arg);
 
 extern int inet6_hash_connect(struct inet_timewait_death_row *death_row,
