@@ -408,6 +408,9 @@ static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
 	}
 
 	hh = &n->hh;
+#if IS_ENABLED(CONFIG_MPLS)
+	neigh_check_type(n, skb->protocol);
+#endif
 	if ((n->nud_state & NUD_CONNECTED) && hh->hh_len)
 		return neigh_hh_output(hh, skb);
 	else
