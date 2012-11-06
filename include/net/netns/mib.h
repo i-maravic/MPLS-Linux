@@ -23,6 +23,9 @@ struct netns_mib {
 #ifdef CONFIG_XFRM_STATISTICS
 	DEFINE_SNMP_STAT(struct linux_xfrm_mib, xfrm_statistics);
 #endif
+#if IS_ENABLED(CONFIG_MPLS)
+	DEFINE_SNMP_STAT(struct mpls_mib, mpls_statistics);
+#endif
 };
 
 #endif

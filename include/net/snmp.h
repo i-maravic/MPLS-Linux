@@ -116,6 +116,12 @@ struct linux_xfrm_mib {
 	unsigned long	mibs[LINUX_MIB_XFRMMAX];
 };
 
+/* MPLS */
+#define MPLS_MIB_MAX	__MPLS_MIB_MAX
+struct mpls_mib {
+	unsigned long	mibs[MPLS_MIB_MAX];
+};
+
 #define SNMP_ARRAY_SZ 1
 
 #define DEFINE_SNMP_STAT(type, name)	\
