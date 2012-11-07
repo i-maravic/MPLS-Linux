@@ -903,7 +903,7 @@ out:	kfree_skb(skb);
 	return 0;
 }
 
-static void __ip_rt_update_pmtu(struct rtable *rt, struct flowi4 *fl4, u32 mtu)
+void __ip_rt_update_pmtu(struct rtable *rt, struct flowi4 *fl4, u32 mtu)
 {
 	struct dst_entry *dst = &rt->dst;
 	struct fib_result res;
@@ -933,6 +933,7 @@ static void __ip_rt_update_pmtu(struct rtable *rt, struct flowi4 *fl4, u32 mtu)
 	}
 	rcu_read_unlock();
 }
+EXPORT_SYMBOL(__ip_rt_update_pmtu);
 
 static void ip_rt_update_pmtu(struct dst_entry *dst, struct sock *sk,
 			      struct sk_buff *skb, u32 mtu)

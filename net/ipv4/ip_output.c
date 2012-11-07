@@ -1357,6 +1357,7 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 out:
 	return skb;
 }
+EXPORT_SYMBOL(__ip_make_skb);
 
 int ip_send_skb(struct net *net, struct sk_buff *skb)
 {
