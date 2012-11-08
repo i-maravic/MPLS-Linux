@@ -169,7 +169,7 @@ set_ip_dscp(struct sk_buff *skb, u8 tos)
 
 		iphdr = ip_hdr(skb);
 
-		ipv4_change_dsfield(iphdr, 0, tos);
+		ipv4_change_dsfield(iphdr, (u8)~IPTOS_PREC_MASK, IPTOS_PREC(tos));
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (skb->protocol == htons(ETH_P_IPV6)) {
@@ -179,7 +179,7 @@ set_ip_dscp(struct sk_buff *skb, u8 tos)
 
 		ipv6hdr = ipv6_hdr(skb);
 
-		ipv6_change_dsfield(ipv6hdr, 0, tos);
+		ipv6_change_dsfield(ipv6hdr, (u8)~IPTOS_PREC_MASK, IPTOS_PREC(tos));
 	}
 #endif
 	else
