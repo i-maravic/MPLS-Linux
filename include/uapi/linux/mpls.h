@@ -70,7 +70,8 @@ struct mpls_key {
 #error	"Please fix <asm/byteorder.h>"
 #endif
 			__u8 tc:3;
-			__u16 __pad1:9;
+			__u16 owner:8;
+			__u8 __pad1:1;
 		};
 		struct {
 			__u32 label:20;

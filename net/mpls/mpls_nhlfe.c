@@ -201,17 +201,14 @@ static MPLS_DUMP_CMD(push)
 		req.tc = push->tc;
 
 		ret = nla_put_u32(skb, i, *(u32 *)&req);
-		if (unlikely(ret)) {
-			nla_nest_cancel(skb, nest);
+		if (unlikely(ret))
 			goto out;
-		}
+
 		push++;
 	}
 	ret = nla_put_u8(skb, MPLS_NO_PUSHES, __push->no_push);
-	if (unlikely(ret)) {
-		nla_nest_cancel(skb, nest);
+	if (unlikely(ret))
 		goto out;
-	}
 
 	nla_nest_end(skb, nest);
 out:

@@ -3,6 +3,8 @@
  *
  *      An implementation of the MPLS architecture for Linux.
  *
+ *      Hash code is reused from Jozsef Kadlecsik's ip_set_ahash.h
+ *
  * Authors:
  *          James Leu        <jleu@mindspring.com>
  *          Ramon Casellas   <casellas@infres.enst.fr>
@@ -28,22 +30,13 @@
 #include <linux/if_ether.h>
 #include <linux/if_arp.h>
 #include <linux/if_packet.h>
+#include <linux/rcupdate.h>
+#include <linux/jhash.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/route.h>
 #include <net/mpls.h>
 #include "mpls_cmd.h"
-
-static int ilm_net_id __read_mostly;
-struct ilm_net {
-	struct radix_tree_root ilm_tree;
-	struct hlist_head ilm_list;
-};
-
-struct ilm_head {
-	struct rcu_head rcu;
-	struct hlist_head list;
-};
 
 const struct {
 	struct nhlfe nhlfe;
@@ -71,8 +64,9 @@ ipv4_explicit_null =
 {
 		.key = {
 			.label = 0x0,
+			.owner = RTPROT_BOOT,
+			.tc = 0,
 		},
-		.owner = RTPROT_BOOT,
 		.nhlfe = (struct nhlfe *)&pop_peek_nhlfe.nhlfe,
 };
 
@@ -81,8 +75,9 @@ ipv6_explicit_null =
 {
 		.key = {
 			.label = 0x2,
+			.owner = RTPROT_BOOT,
+			.tc = 0,
 		},
-		.owner = RTPROT_BOOT,
 		.nhlfe = (struct nhlfe *)&pop_peek_nhlfe.nhlfe,
 };
 
@@ -96,8 +91,563 @@ mpls_reserved[MAX_RES_LABEL] = {
 
 #define __is_reserved_label(key) ((key)->label <= MAX_RES_LABEL)
 
+static inline void
+__destroy_ilm_instrs(struct ilm *ilm)
+{
+	nhlfe_free(ilm->nhlfe);
+	rcu_assign_pointer(ilm->nhlfe, NULL);
+}
+
+static inline void
+ilm_copy(struct ilm *dst, const struct ilm *src)
+{
+	smp_wmb();
+	memcpy(dst, src, sizeof(struct ilm));
+}
+
+static inline bool
+ilm_key_equal(const struct mpls_key *data,
+		    const struct mpls_key *rhs,
+		    u32 *multi, bool exact_match)
+{
+	return data->label == rhs->label &&
+		(++*multi) &&
+		(data->tc == rhs->tc || (!data->tc && !exact_match));
+}
+
+/* Hash implementation */
+
+/* Hashing which uses arrays to resolve clashing. The hash table is resized
+ * (doubled) when searching becomes too long.
+ * Internally jhash is used with the assumption that the size of the
+ * stored data is a multiple of sizeof(u32).
+ *
+ * Readers and resizing
+ *
+ * Resizing can be triggered by userspace command only, and those
+ * are serialized by the rtnl mutex. Read side must be protected by
+ * proper RCU locking.
+ */
+
+/* A hash bucket */
+struct hbucket {
+	struct ilm __rcu *ilm;	/* the array of the values */
+	u8 size;		/* size of the array */
+	u8 pos;			/* position of the first free entry */
+};
+
+/* The hash table: the table size stored here in order to make resizing easy */
+struct htable {
+	union {
+		struct rcu_head rcu;
+		struct work_struct work;
+	};
+	u8 htable_bits;		/* size of hash table == 2^htable_bits */
+	struct hbucket bucket[0]; /* hashtable buckets */
+};
+
+/* The hash structure */
+struct ilm_hash {
+	struct htable __rcu *table; /* the hash table */
+	u32 elements;		/* current element */
+	u32 initval;		/* random jhash init value */
+	u8 hash_max;		/* max elements in an array block */
+};
+
+static int ilm_net_id __read_mostly;
+
+/* Per-net hash tables */
+struct ilm_net {
+	struct ilm_hash h;
+};
+
+/* Number of elements to store in an initial array block */
+#define HASH_INIT_SIZE			4
+
+/* Max number of elements to store in an array block */
+#define HASH_MAX_SIZE			(3 * HASH_INIT_SIZE)
+
+/* Max number of elements can be tuned */
+#define HASH_MAX(h)			((h)->hash_max)
+
+#define DEFAULT_HASHSIZE		1024
+
+#define HKEY_DATALEN	sizeof(struct mpls_key)
+
+#define HKEY(label, initval, htable_bits)				\
+	(jhash2((u32 *)(label), HKEY_DATALEN/sizeof(u32), initval)	\
+		& jhash_mask(htable_bits))
+
+/* Get the ith element from the array block n */
+#define __hash_data_rtnl(n, i)						\
+	((struct ilm *)(rtnl_dereference((n)->ilm) + (i)))
+
+#define __hash_data_rcu(n, i)						\
+	((struct ilm *)(rcu_dereference((n)->ilm) + (i)))
+
+#define hbucket(h, i)							\
+	(&((h)->bucket[(i)]))
+
+static inline u8
+tune_hash_max(u8 curr, u32 multi)
+{
+	u32 n;
+
+	if (multi < curr)
+		return curr;
+
+	n = curr + HASH_INIT_SIZE;
+	/* Currently, at listing one hash bucket must fit into a message.
+	 * Therefore we have a hard limit here.
+	 */
+	return n > curr && n <= 64 ? n : curr;
+}
+
+#define TUNE_HASH_MAX(h, multi)						\
+	((h)->hash_max = tune_hash_max((h)->hash_max, multi))
+
+static struct htable *
+__htable_alloc(size_t size)
+{
+	struct htable *htable = NULL;
+
+	if (size <= PAGE_SIZE)
+		htable = kzalloc(size, GFP_KERNEL);
+	else
+		htable = vzalloc(size);
+
+	return htable;
+}
+
+static void __htable_vfree(struct work_struct *arg)
+{
+	struct htable *htable = container_of(arg, struct htable, work);
+	vfree(htable);
+}
+
+static void
+__htable_free(struct rcu_head *head)
+{
+	struct htable *htable = container_of(head, struct htable, rcu);
+	if (is_vmalloc_addr(htable)) {
+		INIT_WORK(&htable->work, __htable_vfree);
+		schedule_work(&htable->work);
+	} else
+		kfree(htable);
+}
+
+static inline void
+__hbucket_free(struct hbucket *bucket, bool leave_instr)
+{
+	int j;
+	struct hbucket *n = bucket;
+	struct ilm *ilm = rtnl_dereference(n->ilm);
+
+	for (j = 0; j < n->size && !leave_instr; j++)
+		__destroy_ilm_instrs(ilm);
+
+	if (n->size)
+		kfree(ilm);
+}
+
+static inline void
+__hbucket_free_rcu(struct hbucket *bucket, bool leave_instr)
+{
+	int j;
+	struct hbucket *n = bucket;
+	struct ilm *ilm = rtnl_dereference(n->ilm);
+
+	for (j = 0; j < n->size && !leave_instr; j++)
+		__destroy_ilm_instrs(ilm);
+
+	if (n->size)
+		kfree_rcu(ilm, rcu);
+}
+
+static size_t
+__htable_size(u8 hbits)
+{
+	size_t hsize;
+
+	/* We must fit both into u32 in jhash and size_t */
+	if (hbits > 31)
+		return 0;
+	hsize = jhash_size(hbits);
+	if ((((size_t)-1) - sizeof(struct htable))/sizeof(struct hbucket)
+	    < hsize)
+		return 0;
+
+	return hsize * sizeof(struct hbucket) + sizeof(struct htable);
+}
+
+/* Compute htable_bits from the user input parameter hashsize */
+static u8
+__htable_bits(u32 hashsize)
+{
+	/* Assume that hashsize == 2^htable_bits */
+	u8 bits = fls(hashsize - 1);
+	if (jhash_size(bits) != hashsize)
+		/* Round up to the first 2^n value */
+		bits = fls(hashsize);
+
+	return bits;
+}
+
+/* Destroy the hashtable part of the set */
+static void
+__hash_destroy_rcu(struct htable *t, bool leave_instr)
+{
+	struct hbucket *n;
+	u32 i;
+
+	for (i = 0; i < jhash_size(t->htable_bits); i++) {
+		n = hbucket(t, i);
+		__hbucket_free_rcu(n, leave_instr);
+	}
+
+	call_rcu(&t->rcu, __htable_free);
+}
+
+static void
+__hash_destroy(struct htable *t, bool leave_instr)
+{
+	struct hbucket *n;
+	u32 i;
+
+	for (i = 0; i < jhash_size(t->htable_bits); i++) {
+		n = hbucket(t, i);
+		__hbucket_free(n, leave_instr);
+	}
+
+	__htable_free(&t->rcu);
+}
+
+static inline void
+__ilm_array_make_space(struct hbucket *n, int pos)
+{
+	int i;
+	for (i = n->pos - 2; i >= pos; --i)
+		ilm_copy(__hash_data_rtnl(n, i + 1), __hash_data_rtnl(n, i));
+}
+
+static inline void
+__ilm_array_fill_space(struct hbucket *n, int pos)
+{
+	int i;
+	for (i = pos; i < n->pos - 1; ++i)
+		ilm_copy(__hash_data_rtnl(n, i), __hash_data_rtnl(n, i + 1));
+}
+
+static inline int
+__get_pos(struct hbucket *n, const struct mpls_key *key)
+{
+	int pos;
+	const struct mpls_key *o_key;
+	for (pos = 0; pos < n->pos - 1; ++pos) {
+		o_key = &__hash_data_rtnl(n, pos)->key;
+		if (o_key->label < key->label)
+			goto out;
+		else if (o_key->label == key->label &&
+				o_key->tc < key->tc)
+			goto out;
+	}
+
+out:
+	__ilm_array_make_space(n, pos);
+	return pos;
+}
+
+/* Add an element to the hash table when resizing the set:
+ * we spare the maintenance of the internal counters. */
+static struct ilm*
+__ilm_add(struct hbucket *n, const struct mpls_key *key, u8 hash_max)
+{
+	struct ilm *ilm;
+	int pos;
+
+	if (n->pos >= n->size) {
+		struct ilm *tmp;
+
+		if (n->size >= hash_max)
+			/* Trigger rehashing */
+			return ERR_PTR(-EAGAIN);
+
+		tmp = kzalloc((n->size + HASH_INIT_SIZE)
+			      * sizeof(struct ilm), GFP_KERNEL);
+		if (unlikely(!tmp))
+			return ERR_PTR(-ENOMEM);
+
+		if (n->size) {
+			memcpy(tmp, rtnl_dereference(n->ilm), sizeof(struct ilm) * n->size);
+			__hbucket_free_rcu(n, true);
+		}
+
+		rcu_assign_pointer(n->ilm, tmp);
+		n->size += HASH_INIT_SIZE;
+	}
+	n->pos++;
+	pos = __get_pos(n, key);
+	ilm = __hash_data_rtnl(n, pos);
+
+	return ilm;
+}
+
+static inline void
+ilm_hash_destroy(struct net *net)
+{
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct ilm_hash *h = &ilmn->h;
+
+	__hash_destroy_rcu(rtnl_dereference(h->table), false);
+}
+
+/* Resize a hash: create a new hash table with doubling the hashsize
+ * and inserting the elements to it. Repeat until we succeed or
+ * fail due to memory pressures. */
+static int
+ilm_hash_resize(const struct net *net)
+{
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct ilm_hash *h = &ilmn->h;
+	struct htable *t, *orig = rtnl_dereference(h->table);
+	u8 htable_bits = orig->htable_bits;
+	const struct ilm *old_ilm;
+	struct hbucket *n, *m;
+	u32 i, j;
+	u32 label;
+	struct ilm *new_ilm;
+
+retry:
+	new_ilm = NULL;
+	htable_bits++;
+
+	if (unlikely(htable_bits > 31)) {
+		/* In case we have plenty of memory :-) */
+		printk(KERN_WARNING "Cannot increase the hashsize further\n");
+		return -ENOBUFS;
+	}
+
+	t = __htable_alloc(sizeof(*t)
+			 + jhash_size(htable_bits) * sizeof(struct hbucket));
+	if (unlikely(!t))
+		return -ENOMEM;
+
+	t->htable_bits = htable_bits;
+
+	for (i = 0; i < jhash_size(orig->htable_bits); i++) {
+		n = hbucket(orig, i);
+		for (j = 0; j < n->pos; j++) {
+			old_ilm = __hash_data_rtnl(n, j);
+			label = old_ilm->key.label;
+
+			m = hbucket(t, HKEY(&label, h->initval, htable_bits));
+			new_ilm = __ilm_add(m, &old_ilm->key, HASH_MAX(h));
+
+			if (IS_ERR(new_ilm)) {
+				__hash_destroy(t, true);
+				if (PTR_ERR(new_ilm) == -EAGAIN)
+					goto retry;
+				return PTR_ERR(new_ilm);
+			}
+
+			ilm_copy(new_ilm, old_ilm);
+		}
+	}
+
+	rcu_assign_pointer(h->table, t);
+
+	__hash_destroy_rcu(orig, true);
+
+	return 0;
+}
+
+/* Add an element to a hash and update the internal counters when succeeded,
+ * otherwise report the proper error code. */
+static struct ilm *
+ilm_add(const struct net *net, struct mpls_key *key)
+{
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct ilm_hash *h = &ilmn->h;
+	struct htable *t;
+	struct hbucket *n;
+	struct ilm *ilm;
+	int i;
+	u32 label = key->label;
+	u32 hkey, multi = 0;
+
+retry:
+	t = rtnl_dereference(h->table);
+	hkey = HKEY(&label, h->initval, t->htable_bits);
+	n = hbucket(t, hkey);
+
+	for (i = 0; i < n->pos; i++) {
+		if (ilm_key_equal(&__hash_data_rtnl(n, i)->key, key, &multi, true)) {
+			ilm = ERR_PTR(-EEXIST);
+			goto out;
+		}
+	}
+
+	TUNE_HASH_MAX(h, multi);
+	ilm = __ilm_add(n, key, HASH_MAX(h));
+	if (IS_ERR(ilm)) {
+		if (PTR_ERR(ilm) == -EAGAIN) {
+			int ret;
+			ret = ilm_hash_resize(net);
+			if (likely(!ret))
+				goto retry;
+		}
+		goto out;
+	}
+
+	h->elements++;
+out:
+	return ilm;
+}
+
+/* Delete an element from the hash: shift remaining elements left
+ * and free up space if possible.
+ */
+static int
+ilm_del(const struct net *net, struct mpls_key *key)
+{
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct ilm_hash *h = &ilmn->h;
+	struct htable *t = rtnl_dereference(h->table);
+	struct hbucket *n;
+	u32 label = key->label;
+	u32 hkey, multi = 0;
+	struct ilm *data;
+	int i;
+
+	hkey = HKEY(&label, h->initval, t->htable_bits);
+	n = hbucket(t, hkey);
+
+	for (i = 0; i < n->pos; i++) {
+		data = __hash_data_rtnl(n, i);
+
+		if (!ilm_key_equal(&data->key, key, &multi, true))
+			continue;
+
+		__destroy_ilm_instrs(data);
+
+		if (i != n->pos - 1)
+			/* Not last one */
+			__ilm_array_fill_space(n, i);
+
+		n->pos--;
+		h->elements--;
+
+		if (n->pos + HASH_INIT_SIZE < n->size) {
+			struct ilm *tmp =
+				kzalloc((n->size - HASH_INIT_SIZE) * sizeof(struct ilm), GFP_KERNEL | __GFP_NOWARN);
+			if (unlikely(!tmp))
+				return 0;
+
+			n->size -= HASH_INIT_SIZE;
+			memcpy(tmp, n->ilm, n->size * sizeof(struct ilm));
+
+			__hbucket_free_rcu(n, true);
+			rcu_assign_pointer(n->ilm, tmp);
+		}
+		return 0;
+	}
+
+	return -ESRCH;
+}
+
+static int
+ilm_set_nhlfe(struct ilm *ilm, struct nlattr **instr)
+{
+	struct nhlfe *nhlfe = NULL;
+	struct nhlfe *old_nhlfe = NULL;
+
+	old_nhlfe = rtnl_dereference(ilm->nhlfe);
+
+	nhlfe = nhlfe_build(instr);
+	if (IS_ERR(nhlfe))
+		return PTR_ERR(nhlfe);
+
+	rcu_assign_pointer(ilm->nhlfe, nhlfe);
+	nhlfe_free(old_nhlfe);
+
+	return 0;
+}
+
+static struct ilm *
+get_ilm(const struct net *net, const struct mpls_key *key, bool exact_match)
+{
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct ilm_hash *h = &ilmn->h;
+	struct htable *t = !exact_match ? rcu_dereference(h->table) : rtnl_dereference(h->table);
+	struct hbucket *n;
+	struct ilm *ilm;
+	int i;
+	u32 label = key->label;
+	u32 hkey, multi = 0;
+
+	hkey = HKEY(&label, h->initval, t->htable_bits);
+	n = hbucket(t, hkey);
+	for (i = 0; i < n->pos; i++) {
+		ilm = !exact_match ? __hash_data_rcu(n, i) : __hash_data_rtnl(n, i);
+		if (ilm_key_equal(&ilm->key, key, &multi, exact_match))
+			return ilm;
+	}
+	return NULL;
+}
+
 static const struct ilm *
-get_ilm_input(const struct mpls_key *key, u8 tc, const struct net *net);
+get_ilm_input(const struct net *net, const struct mpls_key *key)
+{
+	const struct ilm *ilm = NULL;
+
+	/* handle the reserved label range */
+	if (__is_reserved_label(key))
+		ilm = mpls_reserved[key->label];
+	else
+		ilm = get_ilm(net, key, false);
+
+	return ilm;
+}
+
+static struct ilm *
+add_ilm(struct ilmsg *ilm_msg, struct nlattr **instr, const struct net *net)
+{
+	struct ilm *ilm;
+	struct nhlfe *nhlfe;
+	struct mpls_key key = ilm_msg->key;
+
+	key.tc = ilm_msg->tc;
+	key.owner = ilm_msg->owner;
+
+	if (__is_reserved_label(&key))
+		return ERR_PTR(-EINVAL);
+
+	nhlfe = nhlfe_build(instr);
+	if (IS_ERR(nhlfe))
+		return (struct ilm *)nhlfe;
+
+	ilm = ilm_add(net, &key);
+	if (unlikely(IS_ERR(ilm))) {
+		kfree(nhlfe);
+		return ilm;
+	}
+
+	ilm->key = key;
+	rcu_assign_pointer(ilm->nhlfe, nhlfe);
+
+	return ilm;
+}
+
+static int
+del_ilm(struct ilmsg *ilm_msg, const struct net *net)
+{
+	struct mpls_key key = ilm_msg->key;
+	key.tc = ilm_msg->tc;
+
+	return ilm_del(net, &key);
+}
+
+/* Forwarding and receiving functions */
 
 static int
 mpls_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
@@ -195,10 +745,9 @@ mpls_input(struct sk_buff *skb, struct net_device *dev, const struct mpls_key *k
 {
 	const struct ilm *ilm;
 	int ret = NET_RX_DROP;
-	struct mpls_skb_cb *cb = MPLSCB(skb);
 
 	rcu_read_lock();
-	ilm = get_ilm_input(key, cb->hdr.tc, dev_net(skb->dev));
+	ilm = get_ilm_input(dev_net(skb->dev), key);
 	if (unlikely(!(ilm && ilm->nhlfe))) {
 		rcu_read_unlock();
 		MPLS_INC_STATS_BH(dev_net(dev),
@@ -252,6 +801,7 @@ mpls_recv(struct sk_buff *skb, struct net_device *dev,
 	case ARPHRD_IPGRE:
 		key.label_l = ntohs(cb->hdr.label_l);
 		key.label_u = cb->hdr.label_u;
+		key.tc = cb->hdr.tc;
 		break;
 	default:
 		goto mpls_rcv_err;
@@ -272,250 +822,7 @@ mpls_rcv_drop:
 	goto mpls_rcv_out;
 }
 
-static inline void
-__destroy_ilm_instrs(struct ilm *ilm)
-{
-	nhlfe_free(ilm->nhlfe);
-	rcu_assign_pointer(ilm->nhlfe, NULL);
-}
-
-static struct ilm *
-ilm_alloc(const struct mpls_key *key, u8 tc, u8 owner, struct nhlfe *nhlfe)
-{
-	struct ilm *ilm;
-
-	ilm = kzalloc(sizeof(struct ilm), GFP_KERNEL);
-
-	if (unlikely(!ilm))
-		return NULL;
-
-	INIT_HLIST_NODE(&ilm->global);
-	INIT_HLIST_NODE(&ilm->tc_list);
-
-	ilm->key = *key;
-	ilm->tc = tc;
-	ilm->owner = owner;
-	rcu_assign_pointer(ilm->nhlfe, nhlfe);
-
-	return ilm;
-}
-
-static int
-ilm_set_nhlfe(struct ilm *ilm, struct nlattr **instr)
-{
-	struct nhlfe *nhlfe = NULL;
-	struct nhlfe *old_nhlfe = NULL;
-
-	old_nhlfe = rtnl_dereference(ilm->nhlfe);
-
-	nhlfe = nhlfe_build(instr);
-	if (IS_ERR(nhlfe))
-		return PTR_ERR(nhlfe);
-
-	rcu_assign_pointer(ilm->nhlfe, nhlfe);
-	nhlfe_free(old_nhlfe);
-
-	return 0;
-}
-
-static int
-insert_ilm(const struct mpls_key *key, struct ilm *new_ilm, const struct net* net)
-{
-	int retval = 0;
-	struct ilm_head *tc_head;
-	struct hlist_node *node;
-	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
-#ifdef CONFIG_PROVE_RCU
-	WARN_ON_ONCE(!(lockdep_rtnl_is_held()));
-#endif
-	tc_head = radix_tree_lookup(&ilmn->ilm_tree, *(u32 *)key);
-	if (likely(!tc_head)) {
-		tc_head = kzalloc(sizeof(struct ilm_head), GFP_KERNEL);
-		if (unlikely(!tc_head))
-			return -ENOMEM;
-
-		retval = radix_tree_insert(&ilmn->ilm_tree, *(u32 *)key, tc_head);
-		if (unlikely(retval)) {
-			kfree(tc_head);
-			goto out;
-		}
-	}
-
-	if (likely(hlist_empty(&tc_head->list)))
-		hlist_add_head_rcu(&new_ilm->tc_list, &tc_head->list);
-	else {
-		struct ilm* ilm = NULL, *last = NULL;
-
-		hlist_for_each_entry_rcu(ilm, node, &tc_head->list, tc_list) {
-			if (ilm->tc < new_ilm->tc)
-				break;
-			last = ilm;
-		}
-		if (last)
-			hlist_add_after_rcu(&last->tc_list, &new_ilm->tc_list);
-		else
-			hlist_add_before_rcu(&new_ilm->tc_list, &ilm->tc_list);
-	}
-
-	if (hlist_empty(&ilmn->ilm_list))
-		hlist_add_head_rcu(&new_ilm->global, &ilmn->ilm_list);
-	else {
-		struct ilm* ilm = NULL, *last = NULL;
-
-		hlist_for_each_entry_rcu(ilm, node, &ilmn->ilm_list, global) {
-			if (*(u32 *)(&ilm->key) < *(u32 *)(&new_ilm->key))
-				break;
-			if (*(u32 *)(&ilm->key) == *(u32 *)(&new_ilm->key) &&
-					ilm->tc < new_ilm->tc)
-				break;
-			last = ilm;
-		}
-		if (last)
-			hlist_add_after_rcu(&last->global, &new_ilm->global);
-		else
-			hlist_add_before_rcu(&new_ilm->global, &ilm->global);
-	}
-
-out:
-	return retval;
-}
-
-static void
-remove_ilm(struct ilm *ilm, const struct net *net)
-{
-	struct ilm_head *tc_head;
-	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
-#ifdef CONFIG_PROVE_RCU
-	WARN_ON_ONCE(!(lockdep_rtnl_is_held()));
-#endif
-	hlist_del_rcu(&ilm->global);
-	hlist_del_rcu(&ilm->tc_list);
-
-	tc_head = radix_tree_lookup(&ilmn->ilm_tree, *(u32 *)&ilm->key);
-	if (unlikely(!tc_head)) {
-		WARN_ON(!tc_head);
-		return;
-	}
-
-	if (hlist_empty(&tc_head->list)) {
-		radix_tree_delete(&ilmn->ilm_tree, *(u32 *)&ilm->key);
-		kfree_rcu(tc_head, rcu);
-	}
-}
-
-static struct ilm *
-get_ilm(const struct mpls_key *key, u8 tc, const struct net *net)
-{
-	struct ilm *ilm = NULL;
-	struct ilm_head *tc_head;
-	struct hlist_node *node;
-	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
-#ifdef CONFIG_PROVE_RCU
-	WARN_ON_ONCE(!(lockdep_rtnl_is_held() || rcu_read_lock_held()));
-#endif
-	tc_head = radix_tree_lookup(&ilmn->ilm_tree, *(u32 *)key);
-	if (unlikely(!tc_head))
-		return NULL;
-
-	hlist_for_each_entry_rcu(ilm, node, &tc_head->list, tc_list) {
-		if (ilm->tc == tc)
-			return ilm;
-	}
-	return NULL;
-}
-
-static inline const struct ilm *
-__get_ilm(const struct mpls_key *key, u8 tc, const struct net *net)
-{
-	struct ilm *ilm = NULL;
-	struct ilm_head *tc_head;
-	struct hlist_node *node;
-	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
-#ifdef CONFIG_PROVE_RCU
-	WARN_ON_ONCE(!(lockdep_rtnl_is_held() || rcu_read_lock_held()));
-#endif
-	tc_head = radix_tree_lookup(&ilmn->ilm_tree, *(u32 *)key);
-	if (unlikely(!tc_head))
-		return NULL;
-
-	hlist_for_each_entry_rcu(ilm, node, &tc_head->list, tc_list) {
-		if (!ilm->tc || ilm->tc == tc)
-			return ilm;
-	}
-	return NULL;
-}
-
-static const struct ilm *
-get_ilm_input(const struct mpls_key *key, u8 tc, const struct net *net)
-{
-	const struct ilm *ilm = NULL;
-
-	/* handle the reserved label range */
-	if (__is_reserved_label(key)) {
-		ilm = mpls_reserved[key->label];
-
-		if (unlikely(!ilm))
-			return NULL;
-	} else
-		ilm = __get_ilm(key, tc, net);
-
-	return ilm;
-}
-
-static struct ilm *
-add_ilm(struct ilmsg *ilm_msg, struct nlattr **instr, const struct net *net)
-{
-	struct ilm *ilm;
-	struct nhlfe *nhlfe;
-	const struct mpls_key *key = &ilm_msg->key;
-	u8 tc = ilm_msg->tc;
-	u8 owner = ilm_msg->owner;
-	int ret;
-
-	if (__is_reserved_label(key))
-		return ERR_PTR(-EINVAL);
-
-	ilm = get_ilm(key, tc, net);
-	if (unlikely(ilm))
-		return ERR_PTR(-EEXIST);
-
-	nhlfe = nhlfe_build(instr);
-	if (IS_ERR(nhlfe))
-		return (struct ilm *)nhlfe;
-
-	ilm = ilm_alloc(key, tc, owner, nhlfe);
-	if (unlikely(!ilm))
-		return ERR_PTR(-ENOMEM);
-
-	ret = insert_ilm(key, ilm, net);
-	if (unlikely(ret)) {
-		kfree(ilm);
-		return ERR_PTR(ret);
-	}
-
-	return ilm;
-}
-
-static void
-destroy_ilm(struct ilm *ilm, const struct net *net)
-{
-	remove_ilm(ilm, net);
-	__destroy_ilm_instrs(ilm);
-	kfree_rcu(ilm, rcu);
-}
-
-static int
-del_ilm(struct ilmsg *in, const struct net *net)
-{
-	struct ilm *ilm;
-
-	ilm = get_ilm(&in->key, in->tc, net);
-	if (unlikely(!ilm))
-		return -ESRCH;
-
-	destroy_ilm(ilm, net);
-	return 0;
-}
+/* Netlink functions */
 
 static struct nla_policy ilm_policy[__MPLS_ATTR_MAX] __read_mostly = {
 	[MPLS_ATTR_POP] = { .type = NLA_U8, },
@@ -578,14 +885,12 @@ fill_ilm(struct sk_buff *skb, const struct ilm *ilm,
 	ilm_msg = nlmsg_data(nlh);
 	ilm_msg->family = PF_MPLS;
 	ilm_msg->key = ilm->key;
-	ilm_msg->tc = ilm->tc;
-	ilm_msg->owner = ilm->owner;
+	ilm_msg->tc = ilm->key.tc;
+	ilm_msg->owner = ilm->key.owner;
 
 	ret = nhlfe_dump(rcu_dereference(ilm->nhlfe), skb);
-	if (unlikely(ret < 0)) {
-		nlmsg_free(skb);
+	if (unlikely(ret < 0))
 		goto err;
-	}
 
 	return nlmsg_end(skb, nlh);
 err:
@@ -615,12 +920,17 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 
 	if (nlh->nlmsg_flags & NLM_F_CREATE) {
 		ilm = add_ilm(ilm_msg, tb, net);
+
 		if (unlikely(IS_ERR(ilm)))
 			return PTR_ERR(ilm);
 	} else if (nlh->nlmsg_flags & NLM_F_REPLACE) {
-		ilm = get_ilm(&ilm_msg->key, ilm_msg->tc, net);
+		struct mpls_key key = ilm_msg->key;
+		key.tc = ilm_msg->tc;
+
+		ilm = get_ilm(net, &key, true);
 		if (unlikely(!ilm))
 			return -ESRCH;
+
 		retval = ilm_set_nhlfe(ilm, tb);
 	} else
 		return -EINVAL;
@@ -656,63 +966,69 @@ mpls_ilm_del(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 static int
 mpls_ilm_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct ilm *ilm;
-	struct hlist_node *tmp;
-	int entries_to_skip = cb->args[0];
-	int entry_count = 0;
 	struct net *net = sock_net(skb->sk);
 	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
-	int i = 0;
+	struct htable *t;
+	struct hbucket *n;
+	struct ilm *ilm;
+	int i;
 
 	rcu_read_lock();
-	for (i = 0; i < MAX_RES_LABEL; ++i) {
-		if (entry_count >= entries_to_skip) {
-			if (likely(mpls_reserved[i])) {
-				if (fill_ilm(skb, mpls_reserved[i], cb->nlh->nlmsg_seq,
-						NETLINK_CREDS(cb->skb)->pid, RTM_NEWROUTE, NLM_F_MULTI) < 0)
-					goto out;
-			}
+	for (; cb->args[0] < MAX_RES_LABEL; ++cb->args[0]) {
+		if (likely(mpls_reserved[cb->args[0]])) {
+			if (fill_ilm(skb, mpls_reserved[cb->args[0]], cb->nlh->nlmsg_seq,
+					NETLINK_CREDS(cb->skb)->pid, RTM_NEWROUTE, NLM_F_MULTI) < 0)
+				goto out;
 		}
-		entry_count++;
 	}
 
-	hlist_for_each_entry_rcu(ilm, tmp, &ilmn->ilm_list, global) {
-		if (entry_count >= entries_to_skip) {
+	t = rcu_dereference(ilmn->h.table);
+
+	for (; (cb->args[0] - MAX_RES_LABEL) < jhash_size(t->htable_bits); cb->args[0]++) {
+		n = hbucket(t, cb->args[0] - MAX_RES_LABEL);
+
+		for (i = 0; i < n->pos; i++) {
+			ilm = __hash_data_rcu(n, i);
 			if (fill_ilm(skb, ilm, cb->nlh->nlmsg_seq, NETLINK_CREDS(cb->skb)->pid,
-						RTM_NEWROUTE, NLM_F_MULTI) < 0)
-				break;
+					RTM_NEWROUTE, NLM_F_MULTI) < 0)
+				goto out;
 		}
-		entry_count++;
 	}
 
 out:
 	rcu_read_unlock();
-	cb->args[0] = entry_count;
 
 	return skb->len;
 }
 
+/* Init functions */
+
 static int __net_init ilm_init_net(struct net *net)
 {
 	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct htable *t;
+	size_t hsize;
+	u8 hbits;
 
-	INIT_RADIX_TREE(&ilmn->ilm_tree, GFP_KERNEL);
-	INIT_HLIST_HEAD(&ilmn->ilm_list);
+	memset(&ilmn->h, 0, sizeof(ilmn->h));
+
+	get_random_bytes(&ilmn->h.initval, sizeof(ilmn->h.initval));
+
+	hbits = __htable_bits(DEFAULT_HASHSIZE);
+	hsize = __htable_size(hbits);
+
+	t = __htable_alloc(hsize);
+	t->htable_bits = hbits;
+
+	rcu_assign_pointer(ilmn->h.table, t);
 
 	return 0;
 }
 
 static void __net_exit ilm_exit_net(struct net *net)
 {
-	struct ilm *ilm;
-	struct hlist_node *n, *pos;
-	struct ilm_net *ilmn;
-	LIST_HEAD(list);
-
-	ilmn = net_generic(net, ilm_net_id);
 	rtnl_lock();
-	hlist_for_each_entry_safe(ilm, n, pos, &ilmn->ilm_list, global)
-		destroy_ilm(ilm, net);
+	ilm_hash_destroy(net);
 	rtnl_unlock();
 }
 

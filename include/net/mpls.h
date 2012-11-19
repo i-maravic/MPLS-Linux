@@ -118,13 +118,8 @@ struct nhlfe {
 
 struct ilm {
 	struct rcu_head rcu;
-	struct hlist_node tc_list;
-	struct hlist_node global;
-
-	struct nhlfe __rcu *nhlfe;
 	struct mpls_key key;
-	u8 tc;
-	u8 owner;
+	struct nhlfe __rcu *nhlfe;
 };
 
 #define MPLS_DEFAULT_TTL 64
