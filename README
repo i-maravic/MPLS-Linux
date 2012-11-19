@@ -87,7 +87,6 @@ Reserved labels, except the RouterAlert label, are handled properly.
 TODO:
 1. ICMP message sending, when TTL is exceeded or packet can't be forwarded because of MTU,
    from the inside of MPLS tunnel
-2. ILM entries should be stored in hash table
-3. Firewall support
-4. Bridging support
+2. Firewall support
+3. Bridging support
 
