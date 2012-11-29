@@ -378,23 +378,12 @@ out_unlock:
 static struct rtable *icmp_route_lookup(struct net *net,
 					struct flowi4 *fl4,
 					struct sk_buff *skb_in,
-					const struct iphdr *iph,
-					__be32 saddr, u8 tos,
-					int type, int code,
-					struct icmp_bxm *param)
+					u8 tos, int type, int code)
 {
 	struct rtable *rt, *rt2;
 	struct flowi4 fl4_dec;
 	int err;
 
-	memset(fl4, 0, sizeof(*fl4));
-	fl4->daddr = (param->replyopts.opt.opt.srr ?
-		      param->replyopts.opt.opt.faddr : iph->saddr);
-	fl4->saddr = saddr;
-	fl4->flowi4_tos = RT_TOS(tos);
-	fl4->flowi4_proto = IPPROTO_ICMP;
-	fl4->fl4_icmp_type = type;
-	fl4->fl4_icmp_code = code;
 	security_skb_classify_flow(skb_in, flowi4_to_flowi(fl4));
 	rt = __ip_route_output_key(net, fl4);
 	if (IS_ERR(rt))
@@ -467,63 +456,37 @@ relookup_failed:
 	return ERR_PTR(err);
 }
 
-/*
- *	Send an ICMP message in response to a situation
- *
- *	RFC 1122: 3.2.2	MUST send at least the IP header and 8 bytes of header.
- *		  MAY send more (we do).
- *			MUST NOT change this header information.
- *			MUST NOT reply to a multicast/broadcast IP address.
- *			MUST NOT reply to a multicast/broadcast MAC address.
- *			MUST reply to only the first fragment.
- */
-
-void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
+static bool
+icmp_valid_ip_packet(const struct sk_buff *skb_in, const struct iphdr *iph,
+			const struct rtable *rt, int type)
 {
-	struct iphdr *iph;
-	int room;
-	struct icmp_bxm icmp_param;
-	struct rtable *rt = skb_rtable(skb_in);
-	struct ipcm_cookie ipc;
-	struct flowi4 fl4;
-	__be32 saddr;
-	u8  tos;
-	struct net *net;
-	struct sock *sk;
-
-	if (!rt)
-		goto out;
-	net = dev_net(rt->dst.dev);
-
 	/*
-	 *	Find the original header. It is expected to be valid, of course.
+	 *	Check the original header. It is expected to be valid, of course.
 	 *	Check this, icmp_send is called from the most obscure devices
 	 *	sometimes.
 	 */
-	iph = ip_hdr(skb_in);
-
 	if ((u8 *)iph < skb_in->head ||
 	    (skb_in->network_header + sizeof(*iph)) > skb_in->tail)
-		goto out;
+		goto invalid;
 
 	/*
 	 *	No replies to physical multicast/broadcast
 	 */
 	if (skb_in->pkt_type != PACKET_HOST)
-		goto out;
+		goto invalid;
 
 	/*
 	 *	Now check at the protocol level
 	 */
 	if (rt->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST))
-		goto out;
+		goto invalid;
 
 	/*
 	 *	Only reply to fragment 0. We byte re-order the constant
 	 *	mask for efficiency.
 	 */
 	if (iph->frag_off & htons(IP_OFFSET))
-		goto out;
+		goto invalid;
 
 	/*
 	 *	If we send an ICMP error to an ICMP error a mess would result..
@@ -545,7 +508,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 						 sizeof(_inner_type),
 						 &_inner_type);
 			if (itp == NULL)
-				goto out;
+				goto invalid;
 
 			/*
 			 *	Assume any unknown ICMP type is an error. This
@@ -553,19 +516,26 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 			 */
 			if (*itp > NR_ICMP_TYPES ||
 			    icmp_pointers[*itp].error)
-				goto out;
+				goto invalid;
 		}
 	}
+	return true;
 
-	sk = icmp_xmit_lock(net);
-	if (sk == NULL)
-		return;
+invalid:
+	return false;
+}
 
+static bool
+icmp_create_msg(struct sk_buff *skb_in, struct iphdr *iph, const struct rtable *rt,
+		struct net *net, struct sock *sk, int *room, int *hdr_room,
+		__be32 *saddr, u8 *tos, struct icmp_bxm *icmp_param, struct ipcm_cookie *ipc,
+		struct flowi4 *fl4, int type, int code, __be32 info)
+{
 	/*
 	 *	Construct source address and options.
 	 */
 
-	saddr = iph->daddr;
+	*saddr = iph->daddr;
 	if (!(rt->rt_flags & RTCF_LOCAL)) {
 		struct net_device *dev = NULL;
 
@@ -575,55 +545,111 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 			dev = dev_get_by_index_rcu(net, inet_iif(skb_in));
 
 		if (dev)
-			saddr = inet_select_addr(dev, 0, RT_SCOPE_LINK);
+			*saddr = inet_select_addr(dev, 0, RT_SCOPE_LINK);
 		else
-			saddr = 0;
+			*saddr = 0;
 		rcu_read_unlock();
 	}
 
-	tos = icmp_pointers[type].error ? ((iph->tos & IPTOS_TOS_MASK) |
+	*tos = icmp_pointers[type].error ? ((iph->tos & IPTOS_TOS_MASK) |
 					   IPTOS_PREC_INTERNETCONTROL) :
 					  iph->tos;
 
-	if (ip_options_echo(&icmp_param.replyopts.opt.opt, skb_in))
-		goto out_unlock;
-
+	if (ip_options_echo(&icmp_param->replyopts.opt.opt, skb_in))
+		goto err;
 
 	/*
 	 *	Prepare data for ICMP header.
 	 */
 
-	icmp_param.data.icmph.type	 = type;
-	icmp_param.data.icmph.code	 = code;
-	icmp_param.data.icmph.un.gateway = info;
-	icmp_param.data.icmph.checksum	 = 0;
-	icmp_param.skb	  = skb_in;
-	icmp_param.offset = skb_network_offset(skb_in);
-	inet_sk(sk)->tos = tos;
-	ipc.addr = iph->saddr;
-	ipc.opt = &icmp_param.replyopts.opt;
-	ipc.tx_flags = 0;
+	icmp_param->data.icmph.type	 = type;
+	icmp_param->data.icmph.code	 = code;
+	icmp_param->data.icmph.un.gateway = info;
+	icmp_param->data.icmph.checksum	 = 0;
+	icmp_param->skb	  = skb_in;
+	icmp_param->offset = skb_network_offset(skb_in);
+	inet_sk(sk)->tos = *tos;
+	ipc->addr = iph->saddr;
+	ipc->opt = &icmp_param->replyopts.opt;
+	ipc->tx_flags = 0;
 
-	rt = icmp_route_lookup(net, &fl4, skb_in, iph, saddr, tos,
-			       type, code, &icmp_param);
+	/* RFC says return as much as we can without exceeding 576 bytes. */
+	*hdr_room = sizeof(struct iphdr) + icmp_param->replyopts.opt.opt.optlen;
+	*hdr_room += sizeof(struct icmphdr);
+	*room = 576 - *hdr_room;
+
+	icmp_param->data_len = skb_in->len - icmp_param->offset;
+	if (icmp_param->data_len > *room)
+		icmp_param->data_len = *room;
+	icmp_param->head_len = sizeof(struct icmphdr);
+
+	memset(fl4, 0, sizeof(*fl4));
+	fl4->daddr = (icmp_param->replyopts.opt.opt.srr ?
+		      icmp_param->replyopts.opt.opt.faddr : iph->saddr);
+	fl4->saddr = *saddr;
+	fl4->flowi4_tos = RT_TOS(*tos);
+	fl4->flowi4_proto = IPPROTO_ICMP;
+	fl4->fl4_icmp_type = type;
+	fl4->fl4_icmp_code = code;
+
+	return true;
+
+err:
+	return false;
+}
+
+/*
+ *	Send an ICMP message in response to a situation
+ *
+ *	RFC 1122: 3.2.2	MUST send at least the IP header and 8 bytes of header.
+ *		  MAY send more (we do).
+ *			MUST NOT change this header information.
+ *			MUST NOT reply to a multicast/broadcast IP address.
+ *			MUST NOT reply to a multicast/broadcast MAC address.
+ *			MUST reply to only the first fragment.
+ */
+
+void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
+{
+	struct iphdr *iph = ip_hdr(skb_in);
+	int room;
+	int hdr_room;
+	struct icmp_bxm icmp_param;
+	struct rtable *rt = skb_rtable(skb_in);
+	struct ipcm_cookie ipc;
+	struct flowi4 fl4;
+	__be32 saddr;
+	u8  tos;
+	struct net *net;
+	struct sock *sk;
+
+	if (!rt)
+		goto out;
+	net = dev_net(rt->dst.dev);
+
+	if (!icmp_valid_ip_packet(skb_in, iph, rt, type))
+		goto out;
+
+	sk = icmp_xmit_lock(net);
+	if (sk == NULL)
+		return;
+
+	if (!icmp_create_msg(skb_in, iph, rt, net, sk, &room, &hdr_room,
+			&saddr, &tos, &icmp_param, &ipc, &fl4, type, code, info))
+		goto out_unlock;
+
+	rt = icmp_route_lookup(net, &fl4, skb_in, tos, type, code);
 	if (IS_ERR(rt))
 		goto out_unlock;
 
 	if (!icmpv4_xrlim_allow(net, rt, &fl4, type, code))
 		goto ende;
 
-	/* RFC says return as much as we can without exceeding 576 bytes. */
-
-	room = dst_mtu(&rt->dst);
-	if (room > 576)
-		room = 576;
-	room -= sizeof(struct iphdr) + icmp_param.replyopts.opt.opt.optlen;
-	room -= sizeof(struct icmphdr);
-
-	icmp_param.data_len = skb_in->len - icmp_param.offset;
-	if (icmp_param.data_len > room)
-		icmp_param.data_len = room;
-	icmp_param.head_len = sizeof(struct icmphdr);
+	if (unlikely(dst_mtu(&rt->dst) < 576)) {
+		room = dst_mtu(&rt->dst) - hdr_room;
+		if (icmp_param.data_len > room)
+			icmp_param.data_len = room;
+	}
 
 	icmp_push_reply(&icmp_param, &fl4, &ipc, &rt);
 ende:
