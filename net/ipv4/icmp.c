@@ -191,7 +191,8 @@ EXPORT_SYMBOL(icmp_err_convert);
 
 struct icmp_control {
 	void (*handler)(struct sk_buff *skb);
-	short   error;		/* This ICMP is classed as an error message */
+	u16 error;		/* This ICMP is classed as an error message */
+	u16 extensible;		/* Extension Structure can be appended to this ICMP msg */
 };
 
 static const struct icmp_control icmp_pointers[NR_ICMP_TYPES+1];
@@ -1001,6 +1002,7 @@ static const struct icmp_control icmp_pointers[NR_ICMP_TYPES + 1] = {
 	[ICMP_DEST_UNREACH] = {
 		.handler = icmp_unreach,
 		.error = 1,
+		.extensible = 1,
 	},
 	[ICMP_SOURCE_QUENCH] = {
 		.handler = icmp_unreach,
@@ -1032,10 +1034,12 @@ static const struct icmp_control icmp_pointers[NR_ICMP_TYPES + 1] = {
 	[ICMP_TIME_EXCEEDED] = {
 		.handler = icmp_unreach,
 		.error = 1,
+		.extensible = 1,
 	},
 	[ICMP_PARAMETERPROB] = {
 		.handler = icmp_unreach,
 		.error = 1,
+		.extensible = 1,
 	},
 	[ICMP_TIMESTAMP] = {
 		.handler = icmp_timestamp,

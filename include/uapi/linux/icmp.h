@@ -64,6 +64,16 @@
 #define ICMP_EXC_TTL		0	/* TTL count exceeded		*/
 #define ICMP_EXC_FRAGTIME	1	/* Fragment Reass time exceeded	*/
 
+/* Codes for ICMP Extension Header and Extension Objects */
+#define ICMP_EXT_HDR_VERSION	2	/* Current ICMP Extension Version */
+
+#define ICMP_EXT_MPLS_CLASS	1	/* RFC 4950 -
+					   ICMP Extensions for Multiprotocol Label Switching */
+#define ICMP_EXT_MPLS_IN_LS	1	/* MPLS Incoming Label Stack C-TYPE */
+
+#define ICMP_EXT_IF_CLASS	2	/* RFC 5837 -
+					   Extending ICMP for Interface and Next-Hop Identification */
+
 
 struct icmphdr {
   __u8		type;
@@ -82,6 +92,25 @@ struct icmphdr {
   } un;
 };
 
+struct icmp_ext_hdr {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8 __resv1:4,
+	     version:4;
+#elif defined(__BIG_ENDIAN_BITFIELD)
+	__u8 version:4,
+	     __resv1:4;
+#else
+#error	"Please fix <asm/byteorder.h>"
+#endif
+	__u8 __resv2;
+	__sum16 checksum;
+};
+
+struct icmp_ext_obj {
+	__be16 length;
+	__u8 class;
+	__u8 c_type;
+};
 
 /*
  *	constants for (set|get)sockopt
