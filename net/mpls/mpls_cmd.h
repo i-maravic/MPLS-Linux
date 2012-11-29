@@ -217,47 +217,6 @@ get_ttl(struct sk_buff *skb)
 	}
 }
 
-static inline int
-decrement_ip_ttl(struct sk_buff *skb)
-{
-	switch(skb->protocol) {
-	case htons(ETH_P_IP):
-	{
-		struct iphdr *iphdr = ip_hdr(skb);
-		if (iphdr->ttl <= 1) {
-			icmp_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0);
-			goto err;
-		}
-		set_ip_ttl(iphdr, iphdr->ttl - 1);
-	}
-	break;
-#if IS_ENABLED(CONFIG_IPV6)
-	case htons(ETH_P_IPV6):
-	{
-		struct ipv6hdr *ipv6hdr = ipv6_hdr(skb);
-		if (ipv6hdr->hop_limit <= 1) {
-			icmpv6_send(skb, ICMPV6_TIME_EXCEED, ICMPV6_EXC_HOPLIMIT, 0);
-			goto err;
-		}
-		ipv6hdr->hop_limit--;
-	}
-#endif
-	break;
-	default:
-		goto discard;
-	}
-
-	return 0;
-
-err:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTERRORS);
-	return -MPLS_ERR;
-
-discard:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
-	return -MPLS_ERR;
-}
-
 #if IS_ENABLED(CONFIG_IPV6)
 static bool
 ipv6_has_fragment_hdr(const struct sk_buff *skb)

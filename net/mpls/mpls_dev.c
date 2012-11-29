@@ -125,10 +125,6 @@ send_common:
 			tdev->stats.collisions++;
 			goto drop;
 		}
-
-		ret = decrement_ip_ttl(skb);
-		if (unlikely(ret))
-			goto drop;
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (mi->cmd == MPLS_ATTR_SEND_IPv6) {
