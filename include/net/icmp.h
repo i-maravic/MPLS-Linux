@@ -40,6 +40,9 @@ struct sk_buff;
 struct net;
 
 extern void	icmp_send(struct sk_buff *skb_in,  int type, int code, __be32 info);
+extern void	__icmp_ext_send(struct sk_buff *skb_in, int type, int code, __be32 info,
+				u16 ext_length, u8 ext_class, u8 ext_c_type, void *ext_data,
+				int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4));
 extern int	icmp_rcv(struct sk_buff *skb);
 extern void	icmp_err(struct sk_buff *, u32 info);
 extern int	icmp_init(void);

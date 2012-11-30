@@ -110,6 +110,7 @@ struct icmp_bxm {
 		struct icmphdr icmph;
 		__be32	       times[3];
 	} data;
+
 	int head_len;
 	struct ip_options_data replyopts;
 };
@@ -291,12 +292,19 @@ static int icmp_glue_bits(void *from, char *to, int offset, int len, int odd,
 	skb->csum = csum_block_add(skb->csum, csum, odd);
 	if (icmp_pointers[icmp_param->data.icmph.type].error)
 		nf_ct_attach(skb, icmp_param->skb);
+#if IS_ENABLED(CONFIG_MPLS)
+	nf_mpls_put(skb->nf_mpls);
+	skb->nf_mpls = icmp_param->skb->nf_mpls;
+	nf_mpls_get(skb->nf_mpls);
+#endif
+
 	return 0;
 }
 
-static void icmp_push_reply(struct icmp_bxm *icmp_param,
-			    struct flowi4 *fl4,
-			    struct ipcm_cookie *ipc, struct rtable **rt)
+static void
+__icmp_push_reply(struct icmp_bxm *icmp_param, struct flowi4 *fl4,
+		    struct ipcm_cookie *ipc, struct rtable **rt,
+		    int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4))
 {
 	struct sock *sk;
 	struct sk_buff *skb;
@@ -321,8 +329,15 @@ static void icmp_push_reply(struct icmp_bxm *icmp_param,
 						 icmp_param->head_len, csum);
 		icmph->checksum = csum_fold(csum);
 		skb->ip_summed = CHECKSUM_NONE;
-		ip_push_pending_frames(sk, fl4);
+		push_pending_frames(sk, fl4);
 	}
+}
+
+static inline void
+icmp_push_reply(struct icmp_bxm *icmp_param, struct flowi4 *fl4,
+		    struct ipcm_cookie *ipc, struct rtable **rt)
+{
+	return __icmp_push_reply(icmp_param, fl4, ipc, rt, ip_push_pending_frames);
 }
 
 /*
@@ -615,7 +630,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 	struct iphdr *iph = ip_hdr(skb_in);
 	int room;
 	int hdr_room;
-	struct icmp_bxm icmp_param;
+	struct icmp_bxm icmp_param = {0};
 	struct rtable *rt = skb_rtable(skb_in);
 	struct ipcm_cookie ipc;
 	struct flowi4 fl4;
@@ -660,6 +675,140 @@ out_unlock:
 out:;
 }
 EXPORT_SYMBOL(icmp_send);
+
+/*
+ *	Send an extended ICMP message in response to a situation
+ *
+ *	RFC 4884: MUST send at least 128 bytes of "original datagram" before the Extension Header.
+ *		If the "original datagram" is shorter then 128 bytes it MUST be zero padded to the
+ *		128 bytes boundary
+ *
+ */
+
+void __icmp_ext_send(struct sk_buff *skb_in, int type, int code, __be32 info,
+		u16 ext_length, u8 ext_class, u8 ext_c_type, void *ext_data,
+		int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4))
+{
+	struct iphdr *iph = ip_hdr(skb_in);
+	int room;
+	int hdr_room;
+	struct icmp_bxm icmp_param = {0};
+	struct rtable *rt = skb_rtable(skb_in);
+	struct ipcm_cookie ipc;
+	struct flowi4 fl4;
+	__be32 saddr;
+	u8  tos;
+	struct net *net;
+	struct sock *sk;
+	int icmp_ext_len = 128 + sizeof(struct icmp_ext_hdr) + sizeof(struct icmp_ext_obj) + ext_length;
+
+	if (!rt)
+		goto out;
+	net = dev_net(rt->dst.dev);
+
+	if (!icmp_valid_ip_packet(skb_in, iph, rt, type))
+		goto out;
+
+	sk = icmp_xmit_lock(net);
+	if (sk == NULL)
+		return;
+
+	if (!icmp_create_msg(skb_in, iph, rt, net, sk, &room, &hdr_room,
+			&saddr, &tos, &icmp_param, &ipc, &fl4, type, code, info))
+		goto out_unlock;
+
+	/*
+	 * For sending ICMP messages extended with
+	 * MPLS extension header, we use existing
+	 * rtable structure. Otherwise we need to
+	 * find new IP route.
+	 */
+	if (ext_class != ICMP_EXT_MPLS_CLASS) {
+		rt = icmp_route_lookup(net, &fl4, skb_in, tos, type, code);
+		if (IS_ERR(rt))
+			goto out_unlock;
+	} else
+		dst_hold(&rt->dst);
+
+	if (!icmpv4_xrlim_allow(net, rt, &fl4, type, code))
+		goto ende;
+
+	/*
+	 * First check if the MTU is large enough to send ICMP extended message.
+	 * If this isn't the case, we'll just send ordinary ICMP message.
+	 * In other case, we'll set values in icmp_ext_hdr and icmp_ext_object.
+	 */
+	if (unlikely(dst_mtu(&rt->dst) < icmp_ext_len)) {
+		room = dst_mtu(&rt->dst) - hdr_room;
+		if (icmp_param.data_len > room)
+			icmp_param.data_len = room;
+	} else if (likely(ext_length != 0 && icmp_pointers[type].extensible)) {
+		const struct icmp_ext_hdr icmp_e_hdr = {
+			.version = ICMP_EXT_HDR_VERSION,
+		};
+		const struct icmp_ext_obj icmp_e_obj = {
+			.length = htons((u16)(ext_length + sizeof(struct icmp_ext_obj))),
+			.class = ext_class,
+			.c_type = ext_c_type,
+		};
+		struct icmp_ext_hdr *__e_hdr;
+
+		const int e_hdr_off = 128;
+		const int e_obj_off = e_hdr_off + sizeof(struct icmp_ext_hdr);
+		const int e_data_off = e_obj_off + sizeof(struct icmp_ext_obj);
+
+		__wsum csum;
+		/*
+		 * If the data length is less than 128 bytes,
+		 * it will be zero padded to 128 bytes
+		 */
+		if (icmp_param.data_len < icmp_ext_len) {
+			if (skb_pad(icmp_param.skb, icmp_ext_len - icmp_param.data_len))
+				goto ende;
+			skb_put(icmp_param.skb, icmp_ext_len - icmp_param.data_len);
+		}
+
+		/*
+		 * To avoid complication of things, after 128th byte
+		 * we'll put the ICMP extension header, ICMP extension object
+		 * and ICMP extension object's data.
+		 *
+		 * ICMP Extension Header checksum is calculated here, so the
+		 * ICMP checksum could be calculated properly.
+		 *
+		 * We'll adjust data_len here so they would be copied with other
+		 * IP data.
+		 */
+		icmp_param.data_len = icmp_ext_len;
+
+		csum = csum_partial_copy_nocheck((void *)&icmp_e_hdr,
+					 (char *)(icmp_param.skb->data + e_hdr_off),
+					 sizeof(struct icmp_ext_hdr), 0);
+
+		csum = csum_partial_copy_nocheck((void *)&icmp_e_obj,
+					 (char *)(icmp_param.skb->data + e_obj_off),
+					 sizeof(struct icmp_ext_obj), csum);
+
+		csum = csum_partial_copy_nocheck(ext_data,
+					 (char *)(icmp_param.skb->data + e_data_off),
+					 ext_length, csum);
+
+		__e_hdr = (struct icmp_ext_hdr *)(icmp_param.skb->data + e_hdr_off);
+		__e_hdr->checksum = csum_fold(csum);
+	} else if (unlikely(dst_mtu(&rt->dst) < 576)) {
+		room = dst_mtu(&rt->dst) - hdr_room;
+		if (icmp_param.data_len > room)
+			icmp_param.data_len = room;
+	}
+
+	__icmp_push_reply(&icmp_param, &fl4, &ipc, &rt, push_pending_frames);
+ende:
+	ip_rt_put(rt);
+out_unlock:
+	icmp_xmit_unlock(sk);
+out:;
+}
+EXPORT_SYMBOL(__icmp_ext_send);
 
 
 static void icmp_socket_deliver(struct sk_buff *skb, u32 info)
