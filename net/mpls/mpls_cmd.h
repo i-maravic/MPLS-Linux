@@ -53,6 +53,15 @@ enum {
 
 #define MAX_RES_LABEL (15)
 
+#define MAX_HDR_ARRAY_SIZE (10 * MPLS_HDR_LEN)
+
+struct mpls_hdr_payload {
+	u8 data[MAX_HDR_ARRAY_SIZE]; /* data must be first */
+	__be32 daddr[4];
+	const struct nhlfe *nhlfe;
+	u8 data_len;
+};
+
 #define rcu_dereference_ulong(ptr) rcu_dereference_index_check((ptr), rcu_read_lock_held())
 #define rtnl_dereference_ulong(ptr) rcu_dereference_index_check((ptr), lockdep_rtnl_is_held())
 #define rtnl_dereference_rcu_ulong(ptr) \
@@ -63,10 +72,10 @@ enum {
 			(index) * (sizeof(struct __instr)/sizeof(char)))
 
 #define get_last_instruction(_nhlfe)												\
-		get_instruction((_nhlfe), (_nhlfe)->no_instr - 1)
+		(get_instruction((_nhlfe), (_nhlfe)->no_instr - 1))
 
 #define get_first_instruction(_nhlfe)												\
-		get_instruction((_nhlfe), 0)
+		(get_instruction((_nhlfe), 0))
 
 #define for_each_instr(_nhlfe, _mi, _cnt)											\
 	for ((_mi) = ((struct __instr *)(_nhlfe)->data), (_cnt) = 0;					\
@@ -248,51 +257,32 @@ ipv6_has_fragment_hdr(const struct sk_buff *skb)
 }
 #endif
 
-static inline int
-decrement_ttl(struct sk_buff *skb)
+static bool
+__push_mpls_hdr_payload(struct sk_buff *skb, struct mpls_hdr_payload *payload)
 {
-	switch(skb->protocol) {
-	case htons(ETH_P_IP):
-	{
-		struct iphdr *iphdr = ip_hdr(skb);
-		if (iphdr->ttl <= 1)
-			//TODO mpls_icmp send
-			goto err;
-		set_ip_ttl(iphdr, iphdr->ttl - 1);
-	}
-	break;
-#if IS_ENABLED(CONFIG_IPV6)
-	case htons(ETH_P_IPV6):
-	{
-		struct ipv6hdr *ipv6hdr = ipv6_hdr(skb);
-		if (ipv6hdr->hop_limit <= 1)
-			//TODO mpls_icmp send
-			goto err;
-		ipv6hdr->hop_limit--;
-	}
-	break;
-#endif
-	case htons(ETH_P_MPLS_UC):
-	{
-		struct mpls_hdr *mplshdr = mpls_hdr(skb);
-		if (mplshdr->ttl <= 1)
-			//TODO mpls_icmp send
-			goto err;
-		mplshdr->ttl--;
-	}
-	break;
-	default:
-		goto discard;
-	}
+	struct mpls_skb_cb *cb = MPLSCB(skb);
 
-	return 0;
+	if (payload->data_len) {
+		if (unlikely(payload->data_len > MAX_HDR_ARRAY_SIZE)) {
+			WARN_ON_ONCE(payload->data_len > MAX_HDR_ARRAY_SIZE);
+			goto err;
+		}
+
+		skb_push(skb, payload->data_len);
+		skb_reset_network_header(skb);
+		memcpy(skb_network_header(skb), payload->data, payload->data_len);
+		if (unlikely(skb->len > skb_dst(skb)->dev->mtu)) {
+			WARN_ON_ONCE(skb->len > skb_dst(skb)->dev->mtu);
+			goto err;
+		}
+		skb->protocol = htons(ETH_P_MPLS_UC);
+		label_entry_peek(skb);
+	}
+	memcpy(cb->daddr, payload->daddr, sizeof(payload->daddr));
+
+	return true;
 err:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTERRORS);
-	return -MPLS_ERR;
-
-discard:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
-	return -MPLS_ERR;
+	return false;
 }
 
 /* Array holding opcodes */
@@ -569,18 +559,11 @@ err:
 	return -EINVAL;
 }
 
-#define MAX_HDR_ARRAY_SIZE (10 * MPLS_HDR_LEN)
-
-struct mpls_hdr_payload {
-	__be32 daddr[4];
-	u8 data_len;
-	u8 data[MAX_HDR_ARRAY_SIZE];
-};
-
 static int
 strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload)
 {
 	struct mpls_hdr *hdr = mpls_hdr(skb);
+	struct iphdr *iph;
 	struct mpls_skb_cb *cb = MPLSCB(skb);
 
 	memcpy(payload->daddr, cb->daddr, sizeof(cb->daddr));
@@ -613,6 +596,15 @@ strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload)
 	skb_pull(skb, payload->data_len);
 	skb_reset_network_header(skb);
 
+	iph = ip_hdr(skb);
+
+	if (iph->version == 4)
+		skb->protocol = htons(ETH_P_IP);
+	else if (iph->version == 6)
+		skb->protocol = htons(ETH_P_IPV6);
+	else
+		goto err;
+
 found_ip:
 	return 0;
 
@@ -638,25 +630,8 @@ mpls_finish_send(struct sk_buff *skb)
 	 *    would know if there are MPLS headers that should be pushed on the packet.
 	 */
 	if (unlikely(skb->dev)) {
-		struct mpls_hdr_payload *payload = (struct mpls_hdr_payload *)skb->dev;
-
-		if (payload->data_len) {
-
-			if (unlikely(payload->data_len > MAX_HDR_ARRAY_SIZE)) {
-				WARN_ON_ONCE(payload->data_len > MAX_HDR_ARRAY_SIZE);
-				goto err;
-			}
-
-			skb_push(skb, payload->data_len);
-			skb_reset_network_header(skb);
-			memcpy(skb_network_header(skb), payload->data, payload->data_len);
-			if (unlikely(skb->len > skb_dst(skb)->dev->mtu)) {
-				WARN_ON_ONCE(skb->len > skb_dst(skb)->dev->mtu);
-				goto err;
-			}
-			skb->protocol = htons(ETH_P_MPLS_UC);
-		}
-		memcpy(cb->daddr, payload->daddr, sizeof(payload->daddr));
+		if (unlikely(!__push_mpls_hdr_payload(skb, (struct mpls_hdr_payload *)skb->dev)))
+			goto err;
 		MPLS_INC_STATS_BH(net, MPLS_MIB_IFOUTFRAGMENTEDPKTS);
 	}
 
@@ -692,13 +667,12 @@ mpls_fragment_packet(struct sk_buff *skb, const struct __instr *mi)
 	int ret;
 	struct net *net = dev_net(skb_dst(skb)->dev);
 	struct mpls_hdr_payload buf;
-	struct iphdr *iph;
 
 	if (unlikely(!mi))
 		goto err;
 
 	ret = strip_mpls_headers(skb, &buf);
-	if (ret < 0)
+	if (unlikely(ret))
 		goto err;
 
 	mtu = skb_dst(skb)->dev->mtu - buf.data_len;
@@ -712,24 +686,13 @@ mpls_fragment_packet(struct sk_buff *skb, const struct __instr *mi)
 	if (unlikely(!pskb_may_pull(skb, sizeof(struct iphdr))))
 		goto err;
 
-	iph = ip_hdr(skb);
-
-	if (iph->version == 4) {
-		skb->protocol = htons(ETH_P_IP);
-		if (iph->frag_off & htons(IP_DF))
-			//TODO mpls_icmp send
-			goto err;
-
+	if (skb->protocol == htons(ETH_P_IP)) {
+		BUG_ON(ip_hdr(skb)->frag_off & htons(IP_DF));
 		return ip_fragment(skb, mpls_finish_send);
 	}
 #if IS_ENABLED(CONFIG_IPV6)
-	else if (iph->version == 6) {
-		skb->protocol = htons(ETH_P_IPV6);
-		if (skb->len >= IPV6_MIN_MTU ||
-			!ipv6_has_fragment_hdr(skb))
-			//TODO mpls_icmp send
-			goto err;
-
+	else if (skb->protocol == htons(ETH_P_IPV6)) {
+		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(skb));
 		return ip6_fragment(skb, mpls_finish_send);
 	}
 #endif

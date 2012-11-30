@@ -647,19 +647,118 @@ del_ilm(struct ilmsg *ilm_msg, const struct net *net)
 	return ilm_del(net, &key);
 }
 
+/* Utility functions for forwarding and receiving */
+static int
+mpls_finish_forward(struct sk_buff *skb, const struct nhlfe *nhlfe);
+
+static int
+mpls_push_pending_frames(struct sock *sk, struct flowi4 *fl4, void *extra)
+{
+	struct sk_buff *skb;
+	struct iphdr *iph;
+	struct mpls_hdr_payload *payload = (struct mpls_hdr_payload *)extra;
+
+	skb = ip_finish_skb(sk, fl4);
+	if (!skb)
+		return 0;
+
+	iph = ip_hdr(skb);
+	iph->tot_len = htons(skb->len);
+	ip_send_check(iph);
+
+	if (unlikely(!__push_mpls_hdr_payload(skb, payload)))
+		goto err;
+
+	mpls_hdr(skb)->ttl = MPLSCB(skb)->hdr.ttl = iph->ttl;
+
+	skb->dev = skb_dst(skb)->dev;
+
+	return mpls_finish_forward(skb, payload->nhlfe);
+err:
+	return -ENOBUFS;
+}
+
+static bool
+__fragmentation_allowed(struct sk_buff *skb, const struct nhlfe *nhlfe)
+{
+	struct mpls_hdr *hdr = mpls_hdr(skb);
+	struct iphdr *ip_hdr;
+
+	if (unlikely(skb->protocol != htons(ETH_P_MPLS_UC)))
+		goto err;
+
+	while (!hdr->s)
+		hdr++;
+
+	ip_hdr = (struct iphdr *)(++hdr);
+
+	if (ip_hdr->version == 4) {
+		if (ip_hdr->frag_off & htons(IP_DF)) {
+			struct mpls_hdr_payload buf;
+			if (unlikely(strip_mpls_headers(skb, &buf) != 0))
+				goto err;
+			buf.nhlfe = nhlfe;
+			__icmp_ext_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(dst_mtu(skb_dst(skb))),
+					buf.data_len, ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS, &buf,
+					mpls_push_pending_frames);
+			goto err;
+		}
+	}
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (ip_hdr->version == 6) {
+		if (skb->len >= IPV6_MIN_MTU ||
+			!ipv6_has_fragment_hdr(skb)) {
+			/* TODO */
+			goto err;
+		}
+	}
+#endif
+
+	return true;
+err:
+	return false;
+}
+
+static inline int
+decrement_ttl(struct sk_buff *skb, const struct nhlfe *nhlfe)
+{
+	if (likely(skb->protocol == htons(ETH_P_MPLS_UC))) {
+		struct mpls_hdr *mplshdr = mpls_hdr(skb);
+		if (mplshdr->ttl <= 1) {
+			struct mpls_hdr_payload buf;
+			if (unlikely(strip_mpls_headers(skb, &buf) != 0))
+				goto err;
+			buf.nhlfe = nhlfe;
+			if (skb->protocol == htons(ETH_P_IP))
+				__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
+						buf.data_len, ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS, &buf,
+						mpls_push_pending_frames);
+			else
+				/* TODO */
+			goto err;
+		}
+		MPLSCB(skb)->hdr.ttl = --mplshdr->ttl;
+	} else
+		goto discard;
+
+	return 0;
+err:
+	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTERRORS);
+	return -MPLS_ERR;
+
+discard:
+	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
+	return -MPLS_ERR;
+}
+
+
 /* Forwarding and receiving functions */
 
 static int
-mpls_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
+mpls_finish_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
 	const struct __instr *mi;
-	struct dst_entry *dst = NULL;
 	int ret;
-	unsigned int mpls_headroom =
-			(nhlfe->no_push > nhlfe->no_pop) ? (nhlfe->no_push - nhlfe->no_pop) * MPLS_HDR_LEN : 0;
-
-	if (skb_cow_head(skb, mpls_headroom) < 0)
-		goto out_discard;
 
 	mi = get_first_instruction(nhlfe);
 
@@ -702,10 +801,36 @@ push:
 
 	if (mi->cmd == MPLS_ATTR_PEEK) {
 		ret = mpls_peek(skb, mi);
-		goto free_skb;
+		if (unlikely(ret))
+			goto free_skb;
+		else
+			goto end;
 	}
 
 send:
+	ret = mpls_send(skb, mi);
+	goto end;
+
+free_skb:
+	dev_kfree_skb(skb);
+end:
+	return ret;
+}
+
+static int
+mpls_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
+{
+	const struct __instr *mi;
+	struct dst_entry *dst = NULL;
+	int ret = -NET_XMIT_DROP;
+	int mpls_delta_headroom = (nhlfe->no_push - nhlfe->no_pop) * MPLS_HDR_LEN;
+	unsigned int mpls_headroom =
+			(mpls_delta_headroom > 0) ? mpls_delta_headroom : 0;
+
+	if (skb_cow_head(skb, mpls_headroom) < 0)
+		goto out_discard;
+
+	mi = get_last_instruction(nhlfe);
 	if (mi->cmd == MPLS_ATTR_SEND_IPv4) {
 		dst = mpls_get_dst_ipv4(skb, mi);
 		if (!dst)
@@ -714,12 +839,15 @@ send:
 send_common:
 		__mpls_set_dst(skb, dst);
 
-		ret = decrement_ttl(skb);
+		if (unlikely((skb->len + mpls_delta_headroom > skb_dst(skb)->dev->mtu) &&
+				!__fragmentation_allowed(skb, nhlfe)))
+			goto free_skb;
+
+		ret = decrement_ttl(skb, nhlfe);
 		if (unlikely(ret))
 			goto free_skb;
 
-		ret = mpls_send(skb, mi);
-		goto end;
+		goto exec_cmds;
 	}
 
 	if (mi->cmd == MPLS_ATTR_SEND_IPv6) {
@@ -730,12 +858,15 @@ send_common:
 		goto send_common;
 	}
 
+exec_cmds:
+	mpls_finish_forward(skb, nhlfe);
+	goto end;
+
 out_discard:
 	ret = -NET_XMIT_DROP;
 	MPLS_INC_STATS(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
 free_skb:
-	if (unlikely(ret))
-		dev_kfree_skb(skb);
+	dev_kfree_skb(skb);
 end:
 	return ret;
 }
