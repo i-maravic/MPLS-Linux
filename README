@@ -85,8 +85,8 @@ Reserved labels, except the RouterAlert label, are handled properly.
 
 ---
 TODO:
-1. ICMP message sending, when TTL is exceeded or packet can't be forwarded because of MTU,
+1. Firewall support
+2. ICMPv6 message sending, when TTL is exceeded or packet can't be forwarded because of MTU,
    from the inside of MPLS tunnel
-2. Firewall support
 3. Bridging support
 
