@@ -111,7 +111,7 @@ struct neighbour {
 	unsigned char		ha[ALIGN(MAX_ADDR_LEN, sizeof(unsigned long))];
 	struct hh_cache		hh;
 #if IS_ENABLED(CONFIG_MPLS)
-	unsigned long		h_prot;
+	struct hh_cache		hh_mpls;
 #endif
 	int			(*output)(struct neighbour *, struct sk_buff *);
 	const struct neigh_ops	*ops;
@@ -334,26 +334,6 @@ static inline int neigh_hh_bridge(struct hh_cache *hh, struct sk_buff *skb)
 		memcpy(skb->data - hh_alen, hh->hh_data, ETH_ALEN + hh_alen - ETH_HLEN);
 	} while (read_seqretry(&hh->hh_lock, seq));
 	return 0;
-}
-#endif
-
-#if IS_ENABLED(CONFIG_MPLS)
-/*
- * Checks if cached neighbor's protocol is appropriate one.
- * If it isn't it overrides it and resets hh_len.
- */
-static inline void neigh_check_type(struct neighbour *n, __be16 proto)
-{
-	read_lock_bh(&n->lock);
-	if(unlikely(n->h_prot != proto)) {
-		read_unlock_bh(&n->lock);
-		write_lock_bh(&n->lock);
-		n->h_prot = proto;
-		n->hh.hh_len = 0;
-		write_unlock_bh(&n->lock);
-		return;
-	}
-	read_unlock_bh(&n->lock);
 }
 #endif
 

@@ -644,7 +644,9 @@ mpls_finish_send(struct sk_buff *skb)
 	if (unlikely(!neigh))
 		goto err;
 
-	dst_neigh_output(skb_dst(skb), neigh, skb);
+	__dst_neigh_output(skb_dst(skb), neigh, skb,
+			   (skb->protocol == htons(ETH_P_MPLS_UC)) ?
+			   &neigh->hh_mpls : &neigh->hh);
 	MPLS_INC_STATS_BH(net, MPLS_MIB_OUTPACKETS);
 	MPLS_ADD_STATS_BH(net, MPLS_MIB_OUTOCTETS, packet_length);
 	neigh_release(neigh);
