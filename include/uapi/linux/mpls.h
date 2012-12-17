@@ -13,6 +13,8 @@
 
 #define MPLS_LINUX_VERSION (0x02000001)
 
+#define MPLS_MASTER_DEV "mpls0"
+
 #define MPLS_HDR_LEN (sizeof(u32))
 
 #define TC_MAX ((1 << 3) - 1)

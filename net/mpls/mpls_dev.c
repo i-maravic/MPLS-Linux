@@ -31,6 +31,15 @@
 #include <linux/etherdevice.h>
 #include "mpls_cmd.h"
 
+static void mpls_tunnel_setup(struct net_device *dev);
+
+static struct rtnl_link_ops mpls_link_ops __read_mostly;
+
+static int mpls_dev_net_id __read_mostly;
+struct mpls_dev_net {
+	struct net_device *master_dev;
+};
+
 struct pcpu_tstats {
 	unsigned long	rx_packets;
 	unsigned long	rx_bytes;
@@ -100,6 +109,7 @@ static netdev_tx_t
 mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 {
 	struct mpls_tunnel *tunnel = netdev_priv(tdev);
+	const struct mpls_dev_net *mdn = net_generic(dev_net(tdev), mpls_dev_net_id);
 	const struct nhlfe *nhlfe = NULL;
 	struct dst_entry *dst = NULL;
 	const struct __instr *mi;
@@ -107,6 +117,10 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 	int ret = -NET_XMIT_DROP;
 
 	rcu_read_lock();
+	if (tdev == mdn->master_dev)
+		// TODO
+		goto discard;
+
 	if (skb_cow_head(skb, tunnel->hlen) < 0)
 		goto discard;
 
@@ -221,6 +235,16 @@ exit:
 
 static void mpls_dev_free(struct net_device *dev)
 {
+	struct mpls_tunnel *t = netdev_priv(dev);
+	struct mpls_dev_net *mdn = net_generic(dev_net(dev), mpls_dev_net_id);
+
+	if (unlikely(dev == mdn->master_dev))
+		mdn->master_dev = NULL;
+
+	rtnl_lock();
+	nhlfe_free(t->nhlfe);
+	rtnl_unlock();
+
 	free_percpu(dev->tstats);
 	free_netdev(dev);
 }
@@ -275,6 +299,52 @@ static const struct net_device_ops mpls_netdev_ops = {
 	.ndo_do_ioctl = NULL,
 	.ndo_change_mtu = mpls_tunnel_change_mtu,
 	.ndo_get_stats = mpls_tunnel_get_stats,
+};
+
+static int __net_init mpls_dev_init_net(struct net *net)
+{
+	struct mpls_dev_net *mdn = net_generic(net, mpls_dev_net_id);
+	struct mpls_tunnel *t;
+	int err;
+
+	mdn->master_dev = alloc_netdev(sizeof(struct mpls_tunnel),
+					MPLS_MASTER_DEV, mpls_tunnel_setup);
+	if (!mdn->master_dev) {
+		err = -ENOMEM;
+		goto err_alloc_dev;
+	}
+	dev_net_set(mdn->master_dev, net);
+
+	dev_hold(mdn->master_dev);
+	mdn->master_dev->rtnl_link_ops = &mpls_link_ops;
+
+	t = netdev_priv(mdn->master_dev);
+	memset(t, 0, sizeof(struct mpls_tunnel));
+
+	if ((err = register_netdev(mdn->master_dev)))
+		goto err_reg_dev;
+
+	return 0;
+
+err_reg_dev:
+	mpls_dev_free(mdn->master_dev);
+err_alloc_dev:
+	return err;
+}
+
+static void __net_exit mpls_dev_exit_net(struct net *net)
+{
+	struct mpls_dev_net *mdn = net_generic(net, mpls_dev_net_id);
+
+	if (likely(mdn->master_dev))
+		unregister_netdev(mdn->master_dev);
+}
+
+static struct pernet_operations mpls_dev_net_ops = {
+	.init = mpls_dev_init_net,
+	.exit = mpls_dev_exit_net,
+	.id   = &mpls_dev_net_id,
+	.size = sizeof(struct mpls_dev_net),
 };
 
 static int mpls_tunnel_validate(struct nlattr *tb[], struct nlattr *data[])
@@ -364,8 +434,12 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 						struct nlattr *data[])
 {
 	struct mpls_tunnel *nt;
+	struct mpls_dev_net *mdn = net_generic(dev_net(dev), mpls_dev_net_id);
 	struct nhlfe *old_nhlfe, *nhlfe;
 	int mtu;
+
+	if (dev == mdn->master_dev)
+		return -EINVAL;
 
 	nhlfe = nhlfe_build(data);
 	if (unlikely(IS_ERR(nhlfe)))
@@ -441,9 +515,6 @@ mpls_tunnel_setup(struct net_device *dev)
 static size_t
 mpls_get_size(const struct net_device *dev)
 {
-	struct mpls_tunnel *t = netdev_priv(dev);
-	struct nhlfe *nhlfe = rcu_dereference_rtnl(t->nhlfe);
-
 	return
 		/* MPLS_ATTR_POP */
 		nla_total_size(1) +
@@ -455,7 +526,7 @@ mpls_get_size(const struct net_device *dev)
 		nla_total_size(4) +
 		/* MPLS_ATTR_PUSH */
 		nla_total_size(sizeof(struct nlattr)) +
-		nhlfe->no_push * nla_total_size(4) +
+		(MPLS_PUSH_MAX - 1) * nla_total_size(4) +
 		/* MPLS_NO_PUSHES */
 		nla_total_size(1) +
 		/* MPLS_ATTR_PEEK || MPLS_ATTR_SEND_IPv4 || MPLS_ATTR_SEND_IPv6 */
@@ -497,6 +568,10 @@ static struct rtnl_link_ops mpls_link_ops __read_mostly = {
 int __init mpls_dev_init(void)
 {
 	int err;
+	err = register_pernet_device(&mpls_dev_net_ops);
+	if (err < 0)
+		return err;
+
 	err = rtnl_link_register(&mpls_link_ops);
 	return err;
 }
@@ -512,4 +587,5 @@ void mpls_dev_exit(void)
 		for_each_netdev_safe(net, dev, ndev)
 			if (dev->type == ARPHRD_MPLS)
 				unregister_netdevice(dev);
+	unregister_pernet_device(&mpls_dev_net_ops);
 }

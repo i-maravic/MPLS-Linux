@@ -467,18 +467,22 @@ rollback:
 int
 nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff* skb)
 {
-	struct __instr *mi;
-	int cntr = 0;
 	int ret = 0;
+	if (likely(nhlfe)) {
+		struct __instr *mi;
+		int cntr = 0;
 
-	for_each_instr(nhlfe, mi, cntr) {
-		if (likely(mpls_cmd[mi->cmd].dump))
-			ret = mpls_cmd[mi->cmd].dump(skb, mi);
-		else
-			ret = nla_put_flag(skb, mi->cmd);
-		if (unlikely(ret))
-			return ret;
-	}
-	ret = nla_put_u8(skb, MPLS_ATTR_INSTR_COUNT, nhlfe->no_instr);
+		for_each_instr(nhlfe, mi, cntr) {
+			if (likely(mpls_cmd[mi->cmd].dump))
+				ret = mpls_cmd[mi->cmd].dump(skb, mi);
+			else
+				ret = nla_put_flag(skb, mi->cmd);
+			if (unlikely(ret))
+				return ret;
+		}
+		ret = nla_put_u8(skb, MPLS_ATTR_INSTR_COUNT, nhlfe->no_instr);
+	} else
+		ret = nla_put_u8(skb, MPLS_ATTR_INSTR_COUNT, 0);
+
 	return ret;
 }
