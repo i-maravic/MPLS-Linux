@@ -370,6 +370,7 @@ nhlfe_alloc(int length)
 		return NULL;
 
 	nhlfe->no_instr = length;
+	atomic_set(&nhlfe->refcnt, 1);
 	return nhlfe;
 }
 
@@ -382,23 +383,14 @@ __nhlfe_release(struct __instr *mi)
 }
 
 
-static void
-nhlfe_release(struct nhlfe *list)
+void
+nhlfe_release(struct nhlfe *nhlfe)
 {
 	struct __instr *mi;
 	int cntr;
 
-	for_each_instr(list, mi, cntr)
+	for_each_instr(nhlfe, mi, cntr)
 		__nhlfe_release(mi);
-}
-
-void
-nhlfe_free(struct nhlfe *nhlfe)
-{
-	if (likely(nhlfe)) {
-		nhlfe_release(nhlfe);
-		kfree_rcu(nhlfe, rcu);
-	}
 }
 
 struct nhlfe *

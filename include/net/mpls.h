@@ -108,11 +108,14 @@ struct __instr {
 };
 
 struct nhlfe {
-	struct rcu_head rcu;
+	union {
+		struct rcu_head rcu;
+		atomic_t refcnt;
+	};
 	u8 no_instr;
 	u8 no_push;
 	u8 no_pop;
-	u8 __pad;
+	u8 dead;
 	struct __instr data[0];
 };
 
@@ -124,8 +127,35 @@ struct ilm {
 
 #define MPLS_DEFAULT_TTL 64
 
-void
-nhlfe_free(struct nhlfe *nhlfe);
+void nhlfe_release(struct nhlfe *nhlfe);
+
+static inline void
+nhlfe_hold(struct nhlfe *nhlfe)
+{
+	WARN_ON(nhlfe->dead);
+	atomic_inc(&nhlfe->refcnt);
+}
+
+static inline void
+nhlfe_put(struct nhlfe *nhlfe)
+{
+	if (likely(atomic_dec_and_test(&nhlfe->refcnt))) {
+		WARN_ON(!nhlfe->dead);
+		kfree_rcu(nhlfe, rcu);
+	}
+}
+
+static inline void
+nhlfe_free(struct nhlfe *nhlfe)
+{
+	if (likely(nhlfe)) {
+		WARN_ON(nhlfe->dead);
+		nhlfe->dead = 1;
+		nhlfe_release(nhlfe);
+		if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
+			kfree_rcu(nhlfe, rcu);
+	}
+}
 
 struct nhlfe *
 nhlfe_build(struct nlattr **instr);
