@@ -108,6 +108,9 @@
 #include <linux/kmemleak.h>
 #endif
 #include <net/secure_seq.h>
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
 
 #define RT_FL_TOS(oldflp4) \
 	((oldflp4)->flowi4_tos & (IPTOS_RT_MASK | RTO_ONLINK))
@@ -1284,6 +1287,12 @@ static void rt_set_nexthop(struct rtable *rt, __be32 daddr,
 #ifdef CONFIG_IP_ROUTE_CLASSID
 		rt->dst.tclassid = nh->nh_tclassid;
 #endif
+#if IS_ENABLED(CONFIG_MPLS)
+		if (nh->nhlfe) {
+			nhlfe_hold(nh->nhlfe);
+			rcu_assign_pointer(rt->dst.nhlfe, nh->nhlfe);
+		}
+#endif
 		if (unlikely(fnhe))
 			cached = rt_bind_exception(rt, fnhe, daddr);
 		else if (!(rt->dst.flags & DST_NOCACHE))
@@ -2206,6 +2215,21 @@ static int rt_fill_info(struct net *net,  __be32 dst, __be32 src,
 	if (rt->rt_uses_gateway &&
 	    nla_put_be32(skb, RTA_GATEWAY, rt->rt_gateway))
 		goto nla_put_failure;
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (rt->dst.nhlfe) {
+		struct nlattr *nest;
+
+		nest = nla_nest_start(skb, RTA_MPLS);
+		if (!nest)
+			goto nla_put_failure;
+
+		if (nhlfe_dump(rt->dst.nhlfe, skb))
+			goto nla_put_failure;
+
+		nla_nest_end(skb, nest);
+	}
+#endif
 
 	expires = rt->dst.expires;
 	if (expires) {

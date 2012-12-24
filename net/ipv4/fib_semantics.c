@@ -42,6 +42,9 @@
 #include <net/ip_fib.h>
 #include <net/netlink.h>
 #include <net/nexthop.h>
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
 
 #include "fib_lookup.h"
 
@@ -223,12 +226,19 @@ void free_fib_info(struct fib_info *fi)
 		return;
 	}
 	fib_info_cnt--;
-#ifdef CONFIG_IP_ROUTE_CLASSID
+#if IS_ENABLED(CONFIG_IP_ROUTE_CLASSID) || IS_ENABLED(CONFIG_MPLS)
 	change_nexthops(fi) {
+#ifdef CONFIG_IP_ROUTE_CLASSID
 		if (nexthop_nh->nh_tclassid)
 			fi->fib_net->ipv4.fib_num_tclassid_users--;
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+		if (nexthop_nh->nhlfe)
+			nhlfe_free(nexthop_nh->nhlfe);
+#endif
 	} endfor_nexthops(fi);
 #endif
+
 	call_rcu(&fi->rcu, free_fib_info_rcu);
 }
 
@@ -263,6 +273,9 @@ static inline int nh_comp(const struct fib_info *fi, const struct fib_info *ofi)
 #endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 		    nh->nh_tclassid != onh->nh_tclassid ||
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+		    !mpls_nhlfe_eq(nh->nhlfe, onh->nhlfe) ||
 #endif
 		    ((nh->nh_flags ^ onh->nh_flags) & ~RTNH_F_DEAD))
 			return -1;
@@ -491,6 +504,33 @@ static int fib_get_nhs(struct fib_info *fi, struct rtnexthop *rtnh,
 			if (nexthop_nh->nh_tclassid)
 				fi->fib_net->ipv4.fib_num_tclassid_users++;
 #endif
+#if IS_ENABLED(CONFIG_MPLS)
+			nla = nla_find(attrs, attrlen, RTA_MPLS);
+			if (nla) {
+				struct nlattr *tb[MPLS_ATTR_MAX + 1];
+				struct net_device *mpls_dev = mpls_get_master_dev(fi->fib_net);
+				struct nhlfe *nhlfe;
+
+				if (unlikely(!mpls_dev ||
+					nexthop_nh->nh_oif != mpls_dev->ifindex ||
+					nexthop_nh->nh_gw != 0))
+					return -EINVAL;
+
+				if (nla_parse_nested(tb, MPLS_ATTR_MAX, nla, mpls_policy))
+					return -EINVAL;
+
+				if (tb[MPLS_ATTR_POP] ||
+					  tb[MPLS_ATTR_SWAP] ||
+					  tb[MPLS_ATTR_PEEK])
+					return -EINVAL;
+
+				nhlfe = nhlfe_build(tb);
+				if (IS_ERR(nhlfe))
+					return PTR_ERR(nhlfe);
+
+				rcu_assign_pointer(nexthop_nh->nhlfe, nhlfe);
+			}
+#endif
 		}
 
 		rtnh = rtnh_next(rtnh, &remaining);
@@ -510,6 +550,31 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 
 	if (cfg->fc_priority && cfg->fc_priority != fi->fib_priority)
 		return 1;
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (cfg->fc_nhlfe) {
+		if (!fi->fib_nh->nhlfe || fi->fib_nh->nh_gw || cfg->fc_gw)
+			return 1;
+		else {
+			struct nlattr *tb[MPLS_ATTR_MAX + 1];
+			struct nhlfe *nhlfe;
+			bool ret;
+
+			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy))
+				return 1;
+
+			nhlfe = nhlfe_build(tb);
+			if (IS_ERR(nhlfe))
+				return 1;
+
+			ret = !mpls_nhlfe_eq(fi->fib_nh->nhlfe, nhlfe);
+			nhlfe_free(nhlfe);
+
+			if (ret)
+				return 1;
+		}
+	}
+#endif
 
 	if (cfg->fc_oif || cfg->fc_gw) {
 		if ((!cfg->fc_oif || cfg->fc_oif == fi->fib_nh->nh_oif) &&
@@ -545,6 +610,31 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 			nla = nla_find(attrs, attrlen, RTA_FLOW);
 			if (nla && nla_get_u32(nla) != nh->nh_tclassid)
 				return 1;
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+			nla = nla_find(attrs, attrlen, RTA_MPLS);
+			if (nla) {
+				if (!nh->nhlfe || nh->nh_gw)
+					return 1;
+				else {
+					struct nlattr *tb[MPLS_ATTR_MAX + 1];
+					struct nhlfe *nhlfe;
+					bool ret;
+
+					if (nla_parse_nested(tb, MPLS_ATTR_MAX, nla, mpls_policy))
+						return 1;
+
+					nhlfe = nhlfe_build(tb);
+					if (IS_ERR(nhlfe))
+						return 1;
+
+					ret = !mpls_nhlfe_eq(nh->nhlfe, nhlfe);
+					nhlfe_free(nhlfe);
+
+					if (ret)
+						return 1;
+				}
+			}
 #endif
 		}
 
@@ -888,6 +978,34 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 		nh->nh_oif = cfg->fc_oif;
 		nh->nh_gw = cfg->fc_gw;
 		nh->nh_flags = cfg->fc_flags;
+#if IS_ENABLED(CONFIG_MPLS)
+		if (cfg->fc_nhlfe) {
+			struct nlattr *tb[MPLS_ATTR_MAX + 1];
+			struct net_device *mpls_dev = mpls_get_master_dev(net);
+			struct nhlfe *nhlfe;
+
+			if (unlikely(!mpls_dev ||
+				nh->nh_oif != mpls_dev->ifindex ||
+				nh->nh_gw != 0))
+				goto err_inval;
+
+			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy))
+				goto err_inval;
+
+			if (tb[MPLS_ATTR_POP] ||
+				  tb[MPLS_ATTR_SWAP] ||
+				  tb[MPLS_ATTR_PEEK])
+				goto err_inval;
+
+			nhlfe = nhlfe_build(tb);
+			if (IS_ERR(nhlfe)) {
+				err = PTR_ERR(nhlfe);
+				goto failure;
+			}
+
+			rcu_assign_pointer(nh->nhlfe, nhlfe);
+		}
+#endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 		nh->nh_tclassid = cfg->fc_flow;
 		if (nh->nh_tclassid)
@@ -1044,6 +1162,20 @@ int fib_dump_info(struct sk_buff *skb, u32 portid, u32 seq, int event,
 		    nla_put_u32(skb, RTA_FLOW, fi->fib_nh[0].nh_tclassid))
 			goto nla_put_failure;
 #endif
+#if IS_ENABLED(CONFIG_MPLS)
+		if (fi->fib_nh->nhlfe) {
+			struct nlattr *nest;
+
+			nest = nla_nest_start(skb, RTA_MPLS);
+			if (!nest)
+				goto nla_put_failure;
+
+			if (nhlfe_dump(fi->fib_nh->nhlfe, skb))
+				goto nla_put_failure;
+
+			nla_nest_end(skb, nest);
+		}
+#endif
 	}
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 	if (fi->fib_nhs > 1) {
@@ -1070,6 +1202,20 @@ int fib_dump_info(struct sk_buff *skb, u32 portid, u32 seq, int event,
 			if (nh->nh_tclassid &&
 			    nla_put_u32(skb, RTA_FLOW, nh->nh_tclassid))
 				goto nla_put_failure;
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+			if (nh->nhlfe) {
+				struct nlattr *nest;
+
+				nest = nla_nest_start(skb, RTA_MPLS);
+				if (!nest)
+					goto nla_put_failure;
+
+				if (nhlfe_dump(nh->nhlfe, skb))
+					goto nla_put_failure;
+
+				nla_nest_end(skb, nest);
+			}
 #endif
 			/* length of rtnetlink header + attributes */
 			rtnh->rtnh_len = nlmsg_get_pos(skb) - (void *) rtnh;

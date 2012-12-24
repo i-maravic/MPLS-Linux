@@ -45,6 +45,9 @@
 #include <net/ip_fib.h>
 #include <net/rtnetlink.h>
 #include <net/xfrm.h>
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
 
 #ifndef CONFIG_IP_MULTIPLE_TABLES
 
@@ -533,6 +536,7 @@ const struct nla_policy rtm_ipv4_policy[RTA_MAX + 1] = {
 	[RTA_METRICS]		= { .type = NLA_NESTED },
 	[RTA_MULTIPATH]		= { .len = sizeof(struct rtnexthop) },
 	[RTA_FLOW]		= { .type = NLA_U32 },
+	[RTA_MPLS]		= { .type = NLA_NESTED },
 };
 
 static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
@@ -597,6 +601,14 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 			break;
 		case RTA_TABLE:
 			cfg->fc_table = nla_get_u32(attr);
+			break;
+		case RTA_MPLS:
+#if IS_ENABLED(CONFIG_MPLS)
+			cfg->fc_nhlfe = attr;
+#else
+			err = -EINVAL;
+			goto errout;
+#endif
 			break;
 		}
 	}
