@@ -42,7 +42,11 @@ struct dst_entry {
 		struct dst_entry        *from;
 	};
 	struct dst_entry	*path;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nhlfe __rcu	*nhlfe;
+#else
 	void			*__pad0;
+#endif
 #ifdef CONFIG_XFRM
 	struct xfrm_state	*xfrm;
 #else
