@@ -258,7 +258,7 @@ ipv6_has_fragment_hdr(const struct sk_buff *skb)
 #endif
 
 static bool
-__push_mpls_hdr_payload(struct sk_buff *skb, struct mpls_hdr_payload *payload)
+__push_mpls_hdr_payload(struct sk_buff *skb, const struct mpls_hdr_payload *payload)
 {
 	struct mpls_skb_cb *cb = MPLSCB(skb);
 
@@ -618,33 +618,25 @@ mpls_finish_send(struct sk_buff *skb, const void *data)
 	struct neighbour *neigh;
 	u32 packet_length = skb->len;
 	struct mpls_skb_cb *cb = MPLSCB(skb);
-	struct net *net = dev_net(skb_dst(skb)->dev);
+	struct dst_entry *dst = skb_dst(skb);
+	struct net *net = dev_net(dst->dev);
 
-	/**
-	 * Ugly HACK:
-	 *    I don't wont to stress sk_buff by adding MPLS specific pointer,
-	 *    but I need informations about the stripped labels when fragmenting MPLS packet.
-	 *    Since the skb->dev pointer isn't used in ip_fragment function, I use it to
-	 *    retrieve informations about stripped labels.
-	 *    Because of that, skb->dev must be set to NULL in __mpls_send function, so we
-	 *    would know if there are MPLS headers that should be pushed on the packet.
-	 */
-	if (unlikely(skb->dev)) {
-		if (unlikely(!__push_mpls_hdr_payload(skb, (struct mpls_hdr_payload *)skb->dev)))
+	if (unlikely(data)) {
+		if (unlikely(!__push_mpls_hdr_payload(skb, data)))
 			goto err;
 		MPLS_INC_STATS_BH(net, MPLS_MIB_IFOUTFRAGMENTEDPKTS);
 	}
 
-	skb->dev = skb_dst(skb)->dev;
+	skb->dev = dst->dev;
 
-	if (unlikely(skb_cow_head(skb, LL_RESERVED_SPACE(skb_dst(skb)->dev)) < 0))
+	if (unlikely(skb_cow_head(skb, LL_RESERVED_SPACE(dst->dev)) < 0))
 		goto discard;
 
-	neigh = dst_neigh_lookup(skb_dst(skb), cb->daddr);
+	neigh = dst_neigh_lookup(dst, cb->daddr);
 	if (unlikely(!neigh))
 		goto err;
 
-	__dst_neigh_output(skb_dst(skb), neigh, skb,
+	__dst_neigh_output(dst, neigh, skb,
 			   (skb->protocol == htons(ETH_P_MPLS_UC)) ?
 			   &neigh->hh_mpls : &neigh->hh);
 	MPLS_INC_STATS_BH(net, MPLS_MIB_OUTPACKETS);
@@ -690,12 +682,12 @@ mpls_fragment_packet(struct sk_buff *skb, const struct __instr *mi)
 
 	if (skb->protocol == htons(ETH_P_IP)) {
 		BUG_ON(ip_hdr(skb)->frag_off & htons(IP_DF));
-		return __ip_fragment(skb, NULL, mpls_finish_send);
+		return __ip_fragment(skb, &buf, mpls_finish_send);
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (skb->protocol == htons(ETH_P_IPV6)) {
 		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(skb));
-		return __ip6_fragment(skb, NULL, mpls_finish_send);
+		return __ip6_fragment(skb, &buf, mpls_finish_send);
 	}
 #endif
 
@@ -710,8 +702,6 @@ mpls_send(struct sk_buff *skb, const struct __instr *mi)
 {
 	if (unlikely(skb->len > skb_dst(skb)->dev->mtu))
 		return mpls_fragment_packet(skb, mi);
-
-	skb->dev = NULL;
 
 	return mpls_finish_send(skb, NULL);
 }
