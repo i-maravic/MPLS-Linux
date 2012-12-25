@@ -53,8 +53,7 @@ __mpls_finish_xmit(struct sk_buff *skb, const void *data)
 	u32 packet_length = 0;
 	struct net_device *tdev = skb->dev;
 	struct dst_entry *dst = skb_dst(skb);
-	struct mpls_tunnel *tunnel = netdev_priv(tdev);
-	const struct nhlfe *nhlfe = rcu_dereference(tunnel->nhlfe);
+	const struct nhlfe *nhlfe = data;
 	const struct __instr *mi;
 	struct pcpu_tstats *tstats = this_cpu_ptr(tdev->tstats);
 	int ret = -NET_RX_DROP;
@@ -111,20 +110,31 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 	struct mpls_tunnel *tunnel = netdev_priv(tdev);
 	const struct mpls_dev_net *mdn = net_generic(dev_net(tdev), mpls_dev_net_id);
 	const struct nhlfe *nhlfe = NULL;
-	struct dst_entry *dst = NULL;
+	struct dst_entry *dst = NULL, *tdst = skb_dst(skb);
 	const struct __instr *mi;
 	u32 mtu;
 	int ret = -NET_XMIT_DROP;
 
 	rcu_read_lock();
-	if (tdev == mdn->master_dev)
-		// TODO
-		goto discard;
+	if (tdev == mdn->master_dev) {
+		if (unlikely(!tdst || !tdst->nhlfe))
+			goto discard;
 
-	if (skb_cow_head(skb, tunnel->hlen) < 0)
-		goto discard;
+		nhlfe = rcu_dereference(tdst->nhlfe);
 
-	nhlfe = rcu_dereference(tunnel->nhlfe);
+		if (unlikely(nhlfe->dead)) {
+			tdst->obsolete = DST_OBSOLETE_KILL;
+			goto drop;
+		}
+
+		if (unlikely(skb_cow_head(skb, nhlfe->no_push * MPLS_HDR_LEN) < 0))
+			goto discard;
+	} else {
+		if (unlikely(skb_cow_head(skb, tunnel->hlen) < 0))
+			goto discard;
+
+		nhlfe = rcu_dereference(tunnel->nhlfe);
+	}
 
 	mi = get_last_instruction(nhlfe);
 	if (mi->cmd == MPLS_ATTR_SEND_IPv4) {
@@ -151,8 +161,8 @@ send_common:
 
 	mtu = dst->dev->mtu - tdev->hard_header_len - tunnel->hlen;
 
-	if (likely(skb_dst(skb)))
-		skb_dst(skb)->ops->update_pmtu(skb_dst(skb), NULL, skb, mtu);
+	if (likely(tdst))
+		tdst->ops->update_pmtu(tdst, NULL, skb, mtu);
 
 	if (skb->protocol == htons(ETH_P_IP)) {
 		struct iphdr *iph = ip_hdr(skb);
@@ -171,7 +181,7 @@ send_common:
 					goto err;
 				}
 
-				__ip_fragment(skb, NULL, __mpls_finish_xmit);
+				__ip_fragment(skb, nhlfe, __mpls_finish_xmit);
 				goto exit;
 			}
 		}
@@ -193,7 +203,7 @@ send_common:
 					goto err;
 				}
 
-				__ip6_fragment(skb, NULL, __mpls_finish_xmit);
+				__ip6_fragment(skb, nhlfe, __mpls_finish_xmit);
 				goto exit;
 			}
 		}
@@ -203,7 +213,7 @@ send_common:
 		goto discard;
 
 	__mpls_set_dst(skb, dst);
-	__mpls_finish_xmit(skb, NULL);
+	__mpls_finish_xmit(skb, nhlfe);
 	goto exit;
 
 discard:
