@@ -22,6 +22,9 @@
 #include <linux/prefetch.h>
 
 #include <net/dst.h>
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
 
 /*
  * Theory of operations:
@@ -180,6 +183,9 @@ void *dst_alloc(struct dst_ops *ops, struct net_device *dev,
 	dst->expires = 0UL;
 	dst->path = dst;
 	dst->from = NULL;
+#if IS_ENABLED(CONFIG_MPLS)
+	dst->nhlfe = NULL;
+#endif
 #ifdef CONFIG_XFRM
 	dst->xfrm = NULL;
 #endif
@@ -246,6 +252,11 @@ again:
 		dst->ops->destroy(dst);
 	if (dst->dev)
 		dev_put(dst->dev);
+#if IS_ENABLED(CONFIG_MPLS)
+	if (dst->nhlfe)
+		nhlfe_put(dst->nhlfe);
+#endif
+
 	kmem_cache_free(dst->ops->kmem_cachep, dst);
 
 	dst = child;

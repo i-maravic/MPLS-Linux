@@ -39,6 +39,11 @@ struct dst_entry {
 	unsigned long           expires;
 	struct dst_entry	*path;
 	struct dst_entry	*from;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nhlfe __rcu	*nhlfe;
+#else
+	void			*__pad0;
+#endif
 #ifdef CONFIG_XFRM
 	struct xfrm_state	*xfrm;
 #else
@@ -89,7 +94,9 @@ struct dst_entry {
 	 * (L1_CACHE_SIZE would be too much)
 	 */
 #ifdef CONFIG_64BIT
-	long			__pad_to_align_refcnt[2];
+	long			__pad_to_align_refcnt[1];
+#else
+	long			__pad_to_align_refcnt[15];
 #endif
 	/*
 	 * __refcnt wants to be on a different cache line from
