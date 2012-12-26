@@ -87,10 +87,8 @@ __mpls_finish_xmit(struct sk_buff *skb, const void *data)
 
 	packet_length = skb->len;
 
-	if (unlikely(skb->len > dst->dev->mtu)) {
-		WARN_ON_ONCE(skb->len > dst->dev->mtu);
+	if (unlikely(skb->len > dst->dev->mtu))
 		goto abort;
-	}
 
 	ret = mpls_send(skb, NULL);
 	goto end;
@@ -119,7 +117,7 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 	const struct nhlfe *nhlfe = NULL;
 	struct dst_entry *dst = NULL, *tdst = skb_dst(skb);
 	const struct __instr *mi;
-	u32 mtu;
+	u32 mtu, hlen;
 	int ret = -NET_XMIT_DROP;
 
 	rcu_read_lock();
@@ -134,14 +132,15 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 			goto drop;
 		}
 
-		if (unlikely(skb_cow_head(skb, nhlfe->no_push * MPLS_HDR_LEN) < 0))
-			goto discard;
+		hlen = nhlfe->no_push * MPLS_HDR_LEN;
 	} else {
-		if (unlikely(skb_cow_head(skb, tunnel->hlen) < 0))
-			goto discard;
-
 		nhlfe = rcu_dereference(tunnel->nhlfe);
+
+		hlen = tunnel->hlen;
 	}
+
+	if (unlikely(skb_cow_head(skb, hlen) < 0))
+		goto discard;
 
 	mi = get_last_instruction(nhlfe);
 	if (mi->cmd == MPLS_ATTR_SEND_IPv4) {
@@ -166,7 +165,7 @@ send_common:
 	else
 		goto discard;
 
-	mtu = dst->dev->mtu - tdev->hard_header_len - tunnel->hlen;
+	mtu = dst->dev->mtu - tdev->hard_header_len - hlen;
 
 	if (likely(tdst))
 		tdst->ops->update_pmtu(tdst, NULL, skb, mtu);

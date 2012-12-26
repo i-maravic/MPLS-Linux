@@ -276,10 +276,10 @@ __push_mpls_hdr_payload(struct sk_buff *skb, const struct mpls_hdr_payload *payl
 		skb_push(skb, payload->data_len);
 		skb_reset_network_header(skb);
 		memcpy(skb_network_header(skb), payload->data, payload->data_len);
-		if (unlikely(skb->len > skb_dst(skb)->dev->mtu)) {
-			WARN_ON_ONCE(skb->len > skb_dst(skb)->dev->mtu);
+
+		if (unlikely(skb->len > skb_dst(skb)->dev->mtu))
 			goto err;
-		}
+
 		skb->protocol = htons(ETH_P_MPLS_UC);
 		label_entry_peek(skb);
 	}
@@ -533,7 +533,8 @@ err:
 static int
 mpls_update_pmtu(struct sk_buff *skb, const struct __instr *mi, u32 mtu)
 {
-	if (skb_dst(skb)->ops->protocol == htons(ETH_P_IP)) {
+	struct dst_entry *dst = skb_dst(skb);
+	if (dst->ops->protocol == htons(ETH_P_IP)) {
 		struct __mpls_nh *nh =
 			(struct __mpls_nh *)rcu_dereference_ulong(mi->data);
 		struct flowi4 fl4 = {
@@ -542,14 +543,14 @@ mpls_update_pmtu(struct sk_buff *skb, const struct __instr *mi, u32 mtu)
 			.daddr = nh->ipv4.sin_addr.s_addr,
 			.saddr = 0,
 		};
-		__ip_rt_update_pmtu((struct rtable *)skb_dst(skb), &fl4, mtu);
-		if (!dst_check(skb_dst(skb), 0))
+		__ip_rt_update_pmtu((struct rtable *)dst, &fl4, mtu);
+		if (!dst_check(dst, 0))
 			__mpls_set_dst(skb, mpls_get_dst_ipv4(skb, mi));
 	}
 #if IS_ENABLED(CONFIG_IPV6)
-	else if (skb_dst(skb)->ops->protocol == htons(ETH_P_IPV6)) {
-		skb_dst(skb)->ops->update_pmtu(skb_dst(skb), NULL, skb, mtu);
-		if (!dst_check(skb_dst(skb), 0))
+	else if (dst->ops->protocol == htons(ETH_P_IPV6)) {
+		dst->ops->update_pmtu(dst, NULL, skb, mtu);
+		if (!dst_check(dst, 0))
 			__mpls_set_dst(skb, mpls_get_dst_ipv6(skb, mi));
 	}
 #endif
