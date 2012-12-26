@@ -167,11 +167,20 @@ __nhlfe_build(struct nlattr **instr);
 int
 __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
 
+bool
+nhlfe_instr_eq(const struct nhlfe *lhs, const struct nhlfe *rhs);
+
+bool
+__mpls_nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs);
+
 int
 ilm_init(void);
 
 void
 ilm_exit(void);
+
+struct net_device *
+__mpls_master_dev(struct net* net);
 
 int
 mpls_dev_init(void);
@@ -228,5 +237,7 @@ mpls_recv(struct sk_buff *skb, struct net_device *dev,
 #define nhlfe_free(nhlfe) ({if (mpls_ops) mpls_ops->nhlfe_free(nhlfe); })
 #define nhlfe_dump(nhlfe, skb) (mpls_ops ? mpls_ops->nhlfe_dump(nhlfe, skb) : 0)
 #define mpls_policy (mpls_ops ? mpls_ops->nhlfe_policy : NULL)
+#define mpls_get_master_dev(net) (mpls_ops ? mpls_ops->mpls_master_dev(net) : NULL)
+#define mpls_nhlfe_eq(lhs, rhs) (mpls_ops ? mpls_ops->mpls_nhlfe_eq((lhs), (rhs)) : true)
 
 #endif

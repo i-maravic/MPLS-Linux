@@ -51,6 +51,11 @@ static MPLS_CLEAN_CMD(generic)
 	kfree_rcu(ptr, rcu);
 }
 
+static MPLS_COMP_CMD(generic)
+{
+	return lhs->data == rhs->data;
+}
+
 /*********************************************************************
  * MPLS_CMD_POP
  *********************************************************************/
@@ -93,6 +98,8 @@ static MPLS_BUILD_CMD(swap)
 	push->label_l = htons(tmp->label_l);
 	push->label_u = tmp->label_u;
 	push->tc = tmp->tc;
+	push->ttl = 0;
+	push->s = 0;
 
 	return 0;
 }
@@ -141,7 +148,7 @@ static MPLS_BUILD_CMD(push)
 		return -EINVAL;
 
 	__push = kzalloc(sizeof(struct __push) +
-					pushes * sizeof(struct mpls_hdr), GFP_KERNEL);
+			pushes * sizeof(struct mpls_hdr), GFP_KERNEL);
 	if (unlikely(!__push))
 		return -ENOMEM;
 
@@ -161,8 +168,10 @@ static MPLS_BUILD_CMD(push)
 			push->label_l = htons(tmp->label_l);
 			push->label_u = tmp->label_u;
 			push->tc = tmp->tc;
+			push->s = 0;
+			push->ttl = 0;
 
-			push++;
+			++push;
 			if (unlikely(--pushes < 0))
 				goto cleanup;
 		}
@@ -178,6 +187,28 @@ static MPLS_BUILD_CMD(push)
 cleanup:
 	kfree(__push);
 	return ret;
+}
+
+static MPLS_COMP_CMD(push)
+{
+	struct __push *__push_lhs =
+			(struct __push *)rtnl_dereference_rcu_ulong(lhs->data);
+	struct __push *__push_rhs =
+			(struct __push *)rtnl_dereference_rcu_ulong(rhs->data);
+	int i;
+	const u32 *push_lhs, *push_rhs;
+
+	if (__push_lhs->no_push != __push_rhs->no_push)
+		return false;
+
+	push_lhs = (const u32 *)__push_lhs->push;
+	push_rhs = (const u32 *)__push_rhs->push;
+	for (i = MPLS_PUSH_1; i < (__push_lhs->no_push + MPLS_PUSH_1);
+			++i, ++push_lhs, ++push_rhs) {
+		if (*push_lhs != *push_rhs)
+			return false;
+	}
+	return true;
 }
 
 static MPLS_DUMP_CMD(push)
@@ -259,6 +290,30 @@ static MPLS_BUILD_CMD(send)
 	return 0;
 }
 
+static MPLS_COMP_CMD(send)
+{
+	struct __mpls_nh *nh_lhs =
+			(struct __mpls_nh *)rtnl_dereference_rcu_ulong(lhs->data);
+	struct __mpls_nh *nh_rhs =
+			(struct __mpls_nh *)rtnl_dereference_rcu_ulong(rhs->data);
+
+	if (nh_lhs->iface != nh_rhs->iface)
+		return false;
+
+	if (nh_lhs->ipv4.sin_family == AF_INET) {
+		if (memcmp(&nh_lhs->ipv4, &nh_rhs->ipv4, sizeof(nh_rhs->ipv4)))
+			return false;
+	}
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (nh_lhs->ipv4.sin_family == AF_INET6) {
+		if (memcmp(&nh_lhs->ipv6, &nh_rhs->ipv6, sizeof(nh_rhs->ipv6)))
+			return false;
+	}
+#endif
+
+	return true;
+}
+
 static MPLS_DUMP_CMD(send)
 {
 	struct __mpls_nh *nh =
@@ -323,35 +378,43 @@ static MPLS_DUMP_CMD(dscp)
 
 struct mpls_cmd mpls_cmd[] = {
 	[MPLS_ATTR_POP] = {
+			.compare = mpls_comp_generic,
 			.build = mpls_build_pop,
 			.dump = mpls_dump_pop,
 	},
 	[MPLS_ATTR_DSCP] = {
+			.compare = mpls_comp_generic,
 			.build = mpls_build_dscp,
 			.dump = mpls_dump_dscp,
 	},
 	[MPLS_ATTR_TC_INDEX] = {
+			.compare = mpls_comp_generic,
 			.build = mpls_build_tc_index,
 			.dump = mpls_dump_tc_index,
 	},
 	[MPLS_ATTR_PUSH] = {
+			.compare = mpls_comp_push,
 			.build = mpls_build_push,
 			.dump = mpls_dump_push,
 			.cleanup = mpls_clean_generic,
 	},
 	[MPLS_ATTR_SWAP] = {
+			.compare = mpls_comp_generic,
 			.build = mpls_build_swap,
 			.dump = mpls_dump_swap,
 	},
 	[MPLS_ATTR_PEEK] = {
+			.compare = mpls_comp_generic,
 			.build = mpls_build_peek,
 	},
 	[MPLS_ATTR_SEND_IPv4] = {
+			.compare = mpls_comp_send,
 			.build = mpls_build_send,
 			.dump = mpls_dump_send,
 			.cleanup = mpls_clean_generic,
 	},
 	[MPLS_ATTR_SEND_IPv6] = {
+			.compare = mpls_comp_send,
 			.build = mpls_build_send,
 			.dump = mpls_dump_send,
 			.cleanup = mpls_clean_generic,
@@ -466,6 +529,28 @@ rollback:
 	nhlfe_release(nhlfe);
 	kfree(nhlfe);
 	return ERR_PTR(ret);
+}
+
+bool
+nhlfe_instr_eq(const struct nhlfe *lhs, const struct nhlfe *rhs)
+{
+	const struct __instr *i_lhs, *i_rhs;
+	int cntr;
+
+	if (lhs->no_instr != rhs->no_instr)
+		return false;
+
+	for (i_lhs = lhs->data, i_rhs = rhs->data, cntr = 0;
+			cntr < lhs->no_instr; ++i_rhs, ++i_lhs, ++cntr) {
+
+		if (i_rhs->cmd != i_lhs->cmd)
+			return false;
+
+		if (!mpls_cmd[i_rhs->cmd].compare(i_lhs, i_rhs))
+			return false;
+	}
+
+	return true;
 }
 
 int

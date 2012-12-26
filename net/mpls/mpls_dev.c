@@ -40,6 +40,13 @@ struct mpls_dev_net {
 	struct net_device *master_dev;
 };
 
+struct net_device *
+__mpls_master_dev(struct net* net)
+{
+	struct mpls_dev_net *mdn = net_generic(net, mpls_dev_net_id);
+	return mdn->master_dev;
+}
+
 struct pcpu_tstats {
 	unsigned long	rx_packets;
 	unsigned long	rx_bytes;

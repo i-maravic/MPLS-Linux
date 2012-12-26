@@ -83,6 +83,10 @@ struct mpls_hdr_payload {
 
 #define no_instrs(nhlfe) ((nhlfe) ? (nhlfe)->no_instr : 0)
 
+#define MPLS_COMP_PROTOTYPE(name)									\
+bool (name) (const struct __instr *lhs, const struct __instr *rhs)
+
+#define MPLS_COMP_CMD(name) MPLS_COMP_PROTOTYPE(mpls_comp_##name)
 
 #define MPLS_DOIT_PROTOTYPE(name)									\
 int (name) (struct sk_buff *skb, const struct __instr *elem)
@@ -105,6 +109,7 @@ int (name) (struct sk_buff *skb, const struct __instr *elem)
 #define MPLS_CLEAN_CMD(name) MPLS_CLEAN_PROTOTYPE(mpls_clean_##name)
 
 struct mpls_cmd {
+	MPLS_COMP_PROTOTYPE(*compare);
 	MPLS_BUILD_PROTOTYPE(*build);
 	MPLS_DUMP_PROTOTYPE(*dump);
 	MPLS_CLEAN_PROTOTYPE(*cleanup);

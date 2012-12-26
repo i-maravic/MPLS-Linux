@@ -48,6 +48,20 @@ struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX] __read_mostly = {
 	[MPLS_ATTR_INSTR_COUNT] = { .type = NLA_U8, },
 };
 
+bool
+__mpls_nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs)
+{
+	if (!rhs && !lhs)
+		return true;
+	else if (rhs && lhs) {
+		if (lhs->no_push == rhs->no_push &&
+			lhs->no_pop == rhs->no_pop &&
+			nhlfe_instr_eq(lhs, rhs))
+			return true;
+	}
+	return false;
+}
+
 /**
  * PROC
  */
@@ -292,6 +306,8 @@ static struct mpls_ops __mpls_ops = {
 	.nhlfe_build = __nhlfe_build,
 	.nhlfe_free = __nhlfe_free,
 	.nhlfe_dump = __nhlfe_dump,
+	.mpls_master_dev = __mpls_master_dev,
+	.mpls_nhlfe_eq = __mpls_nhlfe_eq,
 	.nhlfe_policy = __nhlfe_policy
 };
 
