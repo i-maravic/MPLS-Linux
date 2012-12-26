@@ -101,7 +101,8 @@ extern int		ip_local_deliver(struct sk_buff *skb);
 extern int		ip_mr_input(struct sk_buff *skb);
 extern int		ip_output(struct sk_buff *skb);
 extern int		ip_mc_output(struct sk_buff *skb);
-extern int		ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
+extern int		__ip_fragment(struct sk_buff *skb, const void *data,
+					int (*output)(struct sk_buff *, const void *));
 extern int		ip_do_nat(struct sk_buff *skb);
 extern void		ip_send_check(struct iphdr *ip);
 extern int		__ip_local_out(struct sk_buff *skb);
@@ -133,6 +134,11 @@ extern struct sk_buff  *ip_make_skb(struct sock *sk,
 				    struct ipcm_cookie *ipc,
 				    struct rtable **rtp,
 				    unsigned int flags);
+
+static inline int ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+{
+	return __ip_fragment(skb, NULL, (int (*)(struct sk_buff *, const void *)) output);
+}
 
 static inline struct sk_buff *ip_finish_skb(struct sock *sk, struct flowi4 *fl4)
 {

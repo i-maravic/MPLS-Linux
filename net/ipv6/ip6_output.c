@@ -56,8 +56,6 @@
 #include <net/checksum.h>
 #include <linux/mroute6.h>
 
-int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
-
 int __ip6_local_out(struct sk_buff *skb)
 {
 	int len;
@@ -610,7 +608,8 @@ void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
 	fhdr->identification = htonl(new);
 }
 
-int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+int __ip6_fragment(struct sk_buff *skb, const void *data,
+			int (*output)(struct sk_buff *, const void *))
 {
 	struct sk_buff *frag;
 	struct rt6_info *rt = (struct rt6_info*)skb_dst(skb);
@@ -738,7 +737,7 @@ int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 				ip6_copy_metadata(frag, skb);
 			}
 
-			err = output(skb);
+			err = output(skb, data);
 			if(!err)
 				IP6_INC_STATS(net, ip6_dst_idev(&rt->dst),
 					      IPSTATS_MIB_FRAGCREATES);
@@ -877,7 +876,7 @@ slow_path:
 		/*
 		 *	Put this fragment into the sending queue.
 		 */
-		err = output(frag);
+		err = output(frag, data);
 		if (err)
 			goto fail;
 
@@ -895,7 +894,7 @@ fail:
 	kfree_skb(skb);
 	return err;
 }
-EXPORT_SYMBOL(ip6_fragment);
+EXPORT_SYMBOL(__ip6_fragment);
 
 static inline int ip6_rt_check(const struct rt6key *rt_key,
 			       const struct in6_addr *fl_addr,

@@ -613,7 +613,7 @@ err:
 }
 
 static inline int
-mpls_finish_send(struct sk_buff *skb)
+mpls_finish_send(struct sk_buff *skb, const void *data)
 {
 	struct neighbour *neigh;
 	u32 packet_length = skb->len;
@@ -690,12 +690,12 @@ mpls_fragment_packet(struct sk_buff *skb, const struct __instr *mi)
 
 	if (skb->protocol == htons(ETH_P_IP)) {
 		BUG_ON(ip_hdr(skb)->frag_off & htons(IP_DF));
-		return ip_fragment(skb, mpls_finish_send);
+		return __ip_fragment(skb, NULL, mpls_finish_send);
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (skb->protocol == htons(ETH_P_IPV6)) {
 		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(skb));
-		return ip6_fragment(skb, mpls_finish_send);
+		return __ip6_fragment(skb, NULL, mpls_finish_send);
 	}
 #endif
 
@@ -713,7 +713,7 @@ mpls_send(struct sk_buff *skb, const struct __instr *mi)
 
 	skb->dev = NULL;
 
-	return mpls_finish_send(skb);
+	return mpls_finish_send(skb, NULL);
 }
 
 #endif /* __NET_MPLS_MPLS_CMD_H__ */

@@ -48,7 +48,7 @@ struct pcpu_tstats {
 } __attribute__((aligned(4*sizeof(unsigned long))));
 
 static int
-__mpls_finish_xmit(struct sk_buff *skb)
+__mpls_finish_xmit(struct sk_buff *skb, const void *data)
 {
 	u32 packet_length = 0;
 	struct net_device *tdev = skb->dev;
@@ -171,7 +171,7 @@ send_common:
 					goto err;
 				}
 
-				ip_fragment(skb, __mpls_finish_xmit);
+				__ip_fragment(skb, NULL, __mpls_finish_xmit);
 				goto exit;
 			}
 		}
@@ -193,7 +193,7 @@ send_common:
 					goto err;
 				}
 
-				ip6_fragment(skb, __mpls_finish_xmit);
+				__ip6_fragment(skb, NULL, __mpls_finish_xmit);
 				goto exit;
 			}
 		}
@@ -203,7 +203,7 @@ send_common:
 		goto discard;
 
 	__mpls_set_dst(skb, dst);
-	__mpls_finish_xmit(skb);
+	__mpls_finish_xmit(skb, NULL);
 	goto exit;
 
 discard:

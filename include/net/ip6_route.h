@@ -187,7 +187,13 @@ static inline bool ipv6_unicast_destination(const struct sk_buff *skb)
 	return rt->rt6i_flags & RTF_LOCAL;
 }
 
-int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
+int __ip6_fragment(struct sk_buff *skb, const void *data,
+			int (*output)(struct sk_buff *, const void *));
+
+static inline int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+{
+	return __ip6_fragment(skb, NULL, (int (*)(struct sk_buff *, const void *)) output);
+}
 
 static inline int ip6_skb_dst_mtu(struct sk_buff *skb)
 {
