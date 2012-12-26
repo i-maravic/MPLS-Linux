@@ -94,7 +94,7 @@ mpls_reserved[MAX_RES_LABEL] = {
 static inline void
 __destroy_ilm_instrs(struct ilm *ilm)
 {
-	nhlfe_free(ilm->nhlfe);
+	__nhlfe_free(ilm->nhlfe);
 	rcu_assign_pointer(ilm->nhlfe, NULL);
 }
 
@@ -563,12 +563,12 @@ ilm_set_nhlfe(struct ilm *ilm, struct nlattr **instr)
 
 	old_nhlfe = rtnl_dereference(ilm->nhlfe);
 
-	nhlfe = nhlfe_build(instr);
+	nhlfe = __nhlfe_build(instr);
 	if (IS_ERR(nhlfe))
 		return PTR_ERR(nhlfe);
 
 	rcu_assign_pointer(ilm->nhlfe, nhlfe);
-	nhlfe_free(old_nhlfe);
+	__nhlfe_free(old_nhlfe);
 
 	return 0;
 }
@@ -622,7 +622,7 @@ add_ilm(struct ilmsg *ilm_msg, struct nlattr **instr, const struct net *net)
 	if (__is_reserved_label(&key))
 		return ERR_PTR(-EINVAL);
 
-	nhlfe = nhlfe_build(instr);
+	nhlfe = __nhlfe_build(instr);
 	if (IS_ERR(nhlfe))
 		return (struct ilm *)nhlfe;
 
@@ -1019,7 +1019,7 @@ fill_ilm(struct sk_buff *skb, const struct ilm *ilm,
 	ilm_msg->tc = ilm->key.tc;
 	ilm_msg->owner = ilm->key.owner;
 
-	ret = nhlfe_dump(rcu_dereference(ilm->nhlfe), skb);
+	ret = __nhlfe_dump(rcu_dereference(ilm->nhlfe), skb);
 	if (unlikely(ret < 0))
 		goto err;
 

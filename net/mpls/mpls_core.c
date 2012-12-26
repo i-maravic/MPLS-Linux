@@ -39,6 +39,15 @@ MODULE_LICENSE("GPL");
 
 int sysctl_mpls_default_ttl __read_mostly = MPLS_DEFAULT_TTL;
 
+struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX] __read_mostly = {
+	[MPLS_ATTR_DSCP] = { .type = NLA_U8 },
+	[MPLS_ATTR_TC_INDEX] = { .type = NLA_U16, },
+	[MPLS_ATTR_PUSH] = { .type = NLA_NESTED, },
+	[MPLS_ATTR_SEND_IPv4] = { .len = sizeof(struct mpls_nh), },
+	[MPLS_ATTR_SEND_IPv6] = { .len = sizeof(struct mpls_nh), },
+	[MPLS_ATTR_INSTR_COUNT] = { .type = NLA_U8, },
+};
+
 /**
  * PROC
  */
@@ -279,6 +288,13 @@ static struct packet_type mpls_uc_packet_type = {
 	.func = mpls_recv,
 };
 
+static struct mpls_ops __mpls_ops = {
+	.nhlfe_build = __nhlfe_build,
+	.nhlfe_free = __nhlfe_free,
+	.nhlfe_dump = __nhlfe_dump,
+	.nhlfe_policy = __nhlfe_policy
+};
+
 static int __init mpls_init_module(void)
 {
 	int err;
@@ -306,6 +322,7 @@ static int __init mpls_init_module(void)
 		goto cleanup_sysctl;
 
 	dev_add_pack(&mpls_uc_packet_type);
+	mpls_ops = &__mpls_ops;
 
 	return 0;
 
@@ -326,6 +343,7 @@ static void __exit mpls_exit_module(void)
 	mpls_sysctl_exit();
 	ilm_exit();
 	mpls_dev_exit();
+	mpls_ops = NULL;
 
 	synchronize_net();
 }

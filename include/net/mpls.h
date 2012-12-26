@@ -42,6 +42,19 @@
  */
 extern int sysctl_mpls_default_ttl;
 
+struct mpls_ops {
+	struct nhlfe		*(*nhlfe_build) (struct nlattr **instr);
+	void			(*nhlfe_free) (struct nhlfe *nhlfe);
+	int 			(*nhlfe_dump) (const struct nhlfe *nhlfe,
+						struct sk_buff *skb);
+	struct net_device	*(*mpls_master_dev) (struct net* net);
+	bool			(*mpls_nhlfe_eq) (struct nhlfe *lhs,
+						  struct nhlfe *rhs);
+	struct nla_policy	*nhlfe_policy;
+};
+
+extern struct mpls_ops *mpls_ops;
+
 /*
  * SNMP statistics for MPLS
  */
@@ -127,7 +140,7 @@ struct ilm {
 
 #define MPLS_DEFAULT_TTL 64
 
-void nhlfe_release(struct nhlfe *nhlfe);
+extern struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX];
 
 static inline void
 nhlfe_hold(struct nhlfe *nhlfe)
@@ -145,23 +158,14 @@ nhlfe_put(struct nhlfe *nhlfe)
 	}
 }
 
-static inline void
-nhlfe_free(struct nhlfe *nhlfe)
-{
-	if (likely(nhlfe)) {
-		WARN_ON(nhlfe->dead);
-		nhlfe->dead = 1;
-		nhlfe_release(nhlfe);
-		if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
-			kfree_rcu(nhlfe, rcu);
-	}
-}
+void
+__nhlfe_free(struct nhlfe *nhlfe);
 
 struct nhlfe *
-nhlfe_build(struct nlattr **instr);
+__nhlfe_build(struct nlattr **instr);
 
 int
-nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
+__nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
 
 int
 ilm_init(void);
@@ -219,5 +223,10 @@ mpls_propagate_tc(struct net* net)
 int
 mpls_recv(struct sk_buff *skb, struct net_device *dev,
 		struct packet_type *ptype, struct net_device *orig);
+
+#define nhlfe_build(instr) (mpls_ops ? mpls_ops->nhlfe_build(instr) : ERR_PTR(-EPIPE))
+#define nhlfe_free(nhlfe) ({if (mpls_ops) mpls_ops->nhlfe_free(nhlfe); })
+#define nhlfe_dump(nhlfe, skb) (mpls_ops ? mpls_ops->nhlfe_dump(nhlfe, skb) : 0)
+#define mpls_policy (mpls_ops ? mpls_ops->nhlfe_policy : NULL)
 
 #endif

@@ -383,7 +383,7 @@ __nhlfe_release(struct __instr *mi)
 }
 
 
-void
+static void
 nhlfe_release(struct nhlfe *nhlfe)
 {
 	struct __instr *mi;
@@ -393,8 +393,20 @@ nhlfe_release(struct nhlfe *nhlfe)
 		__nhlfe_release(mi);
 }
 
+void
+__nhlfe_free(struct nhlfe *nhlfe)
+{
+	if (likely(nhlfe)) {
+		WARN_ON(nhlfe->dead);
+		nhlfe->dead = 1;
+		nhlfe_release(nhlfe);
+		if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
+			kfree_rcu(nhlfe, rcu);
+	}
+}
+
 struct nhlfe *
-nhlfe_build(struct nlattr **instr)
+__nhlfe_build(struct nlattr **instr)
 {
 	struct nhlfe *nhlfe;
 	struct __instr *mi;
@@ -457,7 +469,7 @@ rollback:
 }
 
 int
-nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff* skb)
+__nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff* skb)
 {
 	int ret = 0;
 	if (likely(nhlfe)) {

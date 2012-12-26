@@ -242,7 +242,7 @@ static void mpls_dev_free(struct net_device *dev)
 		mdn->master_dev = NULL;
 
 	rtnl_lock();
-	nhlfe_free(t->nhlfe);
+	__nhlfe_free(t->nhlfe);
 	rtnl_unlock();
 
 	free_percpu(dev->tstats);
@@ -441,13 +441,13 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 	if (dev == mdn->master_dev)
 		return -EINVAL;
 
-	nhlfe = nhlfe_build(data);
+	nhlfe = __nhlfe_build(data);
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 
 	nt = netdev_priv(dev);
 	old_nhlfe = rtnl_dereference(nt->nhlfe);
-	nhlfe_free(old_nhlfe);
+	__nhlfe_free(old_nhlfe);
 
 	rcu_assign_pointer(nt->nhlfe, nhlfe);
 
@@ -469,7 +469,7 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 	int mtu;
 	int err;
 
-	nhlfe = nhlfe_build(data);
+	nhlfe = __nhlfe_build(data);
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 
@@ -491,7 +491,7 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 	return err;
 
 err:
-	nhlfe_free(nhlfe);
+	__nhlfe_free(nhlfe);
 	rcu_assign_pointer(nt->nhlfe, NULL);
 	return err;
 }
@@ -540,22 +540,13 @@ static int
 mpls_fill_info(struct sk_buff *skb, const struct net_device *dev)
 {
 	struct mpls_tunnel *t = netdev_priv(dev);
-	return nhlfe_dump(rcu_dereference_rtnl(t->nhlfe), skb);
+	return __nhlfe_dump(rcu_dereference_rtnl(t->nhlfe), skb);
 }
-
-static struct nla_policy mpls_dev_policy[__MPLS_ATTR_MAX] __read_mostly = {
-	[MPLS_ATTR_DSCP] = { .type = NLA_U8 },
-	[MPLS_ATTR_TC_INDEX] = { .type = NLA_U16, },
-	[MPLS_ATTR_PUSH] = { .type = NLA_NESTED, },
-	[MPLS_ATTR_SEND_IPv4] = { .len = sizeof(struct mpls_nh), },
-	[MPLS_ATTR_SEND_IPv6] = { .len = sizeof(struct mpls_nh), },
-	[MPLS_ATTR_INSTR_COUNT] = { .type = NLA_U8, },
-};
 
 static struct rtnl_link_ops mpls_link_ops __read_mostly = {
 	.kind		= "mpls",
 	.maxtype	= MPLS_ATTR_MAX,
-	.policy		= mpls_dev_policy,
+	.policy		= __nhlfe_policy,
 	.priv_size	= sizeof(struct mpls_tunnel),
 	.setup		= mpls_tunnel_setup,
 	.validate	= mpls_tunnel_validate,
