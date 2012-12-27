@@ -56,9 +56,17 @@ Creation of MPLS tunnel ingress points is done with:
 
 # ip link add tunnel_name type mpls push 300 192.168.2.2
 
+or with
+
+# ip route add 1.2.3.4 mpls push 300 192.168.2.2
+
 To get more comprehensive explanation use:
 
 $ ip link add tunnel_name type mpls help
+
+or
+
+$ ip route help
 
 To build MPLS tunnel cross connect and egress points use:
 
