@@ -680,9 +680,6 @@ mpls_fragment_packet(struct sk_buff *skb, const struct __instr *mi)
 	if (unlikely(ret))
 		goto err;
 
-	/* HACK */
-	skb->dev = (struct net_device *)&buf;
-
 	if (unlikely(!pskb_may_pull(skb, sizeof(struct iphdr))))
 		goto err;
 
