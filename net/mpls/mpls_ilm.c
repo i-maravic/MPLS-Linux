@@ -97,8 +97,8 @@ ilm_copy(struct ilm *dst, const struct ilm *src)
 
 static inline bool
 ilm_key_equal(const struct mpls_key *data,
-		    const struct mpls_key *rhs,
-		    u32 *multi, bool exact_match)
+	      const struct mpls_key *rhs,
+	      u32 *multi, bool exact_match)
 {
 	return data->label == rhs->label &&
 		(++*multi) &&
@@ -827,34 +827,32 @@ mpls_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
 		goto out_discard;
 
 	mi = get_last_instruction(nhlfe);
-	if (mi->cmd == MPLS_ATTR_SEND_IPv4) {
+	switch (mi->cmd) {
+	case MPLS_ATTR_SEND_IPv4:
 		dst = mpls_get_dst_ipv4(skb, mi);
-		if (!dst)
-			goto free_skb;
-
-send_common:
-		__mpls_set_dst(skb, dst);
-
-		if (unlikely((skb->len + mpls_delta_headroom > skb_dst(skb)->dev->mtu) &&
-				!__fragmentation_allowed(skb, nhlfe)))
-			goto free_skb;
-
-		ret = decrement_ttl(skb, nhlfe);
-		if (unlikely(ret))
-			goto free_skb;
-
-		goto exec_cmds;
-	}
-
-	if (mi->cmd == MPLS_ATTR_SEND_IPv6) {
+		break;
+#if IS_ENABLED(CONFIG_IPV6)
+	case MPLS_ATTR_SEND_IPv6:
 		dst = mpls_get_dst_ipv6(skb, mi);
-		if (!dst)
-			goto free_skb;
-
-		goto send_common;
+		break;
+#endif
+	case MPLS_ATTR_PEEK:
+		goto send;
 	}
+	if (!dst)
+		goto free_skb;
 
-exec_cmds:
+	__mpls_set_dst(skb, dst);
+
+	if (unlikely((skb->len + mpls_delta_headroom > skb_dst(skb)->dev->mtu) &&
+			!__fragmentation_allowed(skb, nhlfe)))
+		goto free_skb;
+
+	ret = decrement_ttl(skb, nhlfe);
+	if (unlikely(ret))
+		goto free_skb;
+
+send:
 	mpls_finish_forward(skb, nhlfe);
 	goto end;
 
@@ -936,17 +934,14 @@ mpls_recv(struct sk_buff *skb, struct net_device *dev,
 
 	return mpls_input(skb, dev, &key);
 
-mpls_rcv_out:
-	kfree_skb(skb);
-	return NET_RX_DROP;
-
 mpls_rcv_err:
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INDISCARDS);
 	goto mpls_rcv_out;
-
 mpls_rcv_drop:
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INERRORS);
-	goto mpls_rcv_out;
+mpls_rcv_out:
+	kfree_skb(skb);
+	return NET_RX_DROP;
 }
 
 /* Netlink functions */

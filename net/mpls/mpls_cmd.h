@@ -158,25 +158,15 @@ set_ip_ttl(struct iphdr *nh, u8 new_ttl)
 static inline u8
 get_tc(struct sk_buff *skb)
 {
-	switch(skb->protocol) {
+	switch (skb->protocol) {
 	case htons(ETH_P_IP):
-	{
-		struct iphdr *iphdr = ip_hdr(skb);
-		return __dscp_to_tc(iphdr->tos);
-	}
+		return __dscp_to_tc(ip_hdr(skb)->tos);
 #if IS_ENABLED(CONFIG_IPV6)
 	case htons(ETH_P_IPV6):
-	{
-		struct ipv6hdr *ipv6hdr = ipv6_hdr(skb);
-		return __dscp_to_tc(ipv6_get_dsfield(ipv6hdr));
-
-	}
+		return __dscp_to_tc(ipv6_get_dsfield(ipv6_hdr(skb)));
 #endif
 	case htons(ETH_P_MPLS_UC):
-	{
-		struct mpls_hdr *mplshdr = mpls_hdr(skb);
-		return mplshdr->tc;
-	}
+		return mpls_hdr(skb)->tc;
 	default:
 		return 0;
 	}
@@ -219,22 +209,13 @@ get_ttl(struct sk_buff *skb)
 {
 	switch(skb->protocol) {
 	case htons(ETH_P_IP):
-	{
-		struct iphdr *iphdr = ip_hdr(skb);
-		return iphdr->ttl;
-	}
+		return ip_hdr(skb)->ttl;
 #if IS_ENABLED(CONFIG_IPV6)
 	case htons(ETH_P_IPV6):
-	{
-		struct ipv6hdr *ipv6hdr = ipv6_hdr(skb);
-		return ipv6hdr->hop_limit;
-	}
+		return ipv6_hdr(skb)->hop_limit;
 #endif
 	case htons(ETH_P_MPLS_UC):
-	{
-		struct mpls_hdr *mplshdr = mpls_hdr(skb);
-		return mplshdr->ttl;
-	}
+		return mpls_hdr(skb)->ttl;
 	default:
 		return sysctl_mpls_default_ttl;
 	}

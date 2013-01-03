@@ -36,6 +36,7 @@ static void mpls_tunnel_setup(struct net_device *dev);
 static struct rtnl_link_ops mpls_link_ops __read_mostly;
 
 static int mpls_dev_net_id __read_mostly;
+
 struct mpls_dev_net {
 	struct net_device *master_dev;
 };
@@ -91,22 +92,19 @@ __mpls_finish_xmit(struct sk_buff *skb, const void *data)
 		goto abort;
 
 	ret = mpls_send(skb, NULL);
-	goto end;
+	if (likely(!ret)) {
+		tstats->tx_packets++;
+		tstats->tx_bytes += packet_length;
+	} else {
+		tdev->stats.tx_dropped++;
+	}
+	return ret;
 
 abort:
 	tdev->stats.tx_aborted_errors++;
 	tdev->stats.tx_errors++;
 	dev_kfree_skb(skb);
 	return -NET_XMIT_DROP;
-
-end:
-	if (likely(!ret)) {
-		tstats->tx_packets++;
-		tstats->tx_bytes += packet_length;
-	} else
-		tdev->stats.tx_dropped++;
-
-	return ret;
 }
 
 static netdev_tx_t
@@ -143,27 +141,26 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 		goto discard;
 
 	mi = get_last_instruction(nhlfe);
-	if (mi->cmd == MPLS_ATTR_SEND_IPv4) {
+	switch (mi->cmd) {
+	case MPLS_ATTR_SEND_IPv4:
 		dst = mpls_get_dst_ipv4(skb, mi);
+		break;
 #if IS_ENABLED(CONFIG_IPV6)
-send_common:
-#endif
-		if (!dst)
-			goto link_failure;
-
-		if (unlikely(dst->dev == tdev)) {
-			tdev->stats.collisions++;
-			goto drop;
-		}
-	}
-#if IS_ENABLED(CONFIG_IPV6)
-	else if (mi->cmd == MPLS_ATTR_SEND_IPv6) {
+	case MPLS_ATTR_SEND_IPv6:
 		dst = mpls_get_dst_ipv6(skb, mi);
-		goto send_common;
-	}
+		break;
 #endif
-	else
+	default:
 		goto discard;
+	}
+
+	if (!dst)
+		goto link_failure;
+
+	if (unlikely(dst->dev == tdev)) {
+		tdev->stats.collisions++;
+		goto drop;
+	}
 
 	mtu = dst->dev->mtu - tdev->hard_header_len - hlen;
 
@@ -238,7 +235,6 @@ err:
 
 drop:
 	tdev->stats.tx_dropped++;
-
 	dst_release(dst);
 
 free_skb:
@@ -369,8 +365,8 @@ static int mpls_tunnel_validate(struct nlattr *tb[], struct nlattr *data[])
 		return 0;
 
 	if (data[MPLS_ATTR_POP] ||
-		  data[MPLS_ATTR_SWAP] ||
-		  data[MPLS_ATTR_PEEK])
+	    data[MPLS_ATTR_SWAP] ||
+	    data[MPLS_ATTR_PEEK])
 		return -EINVAL;
 
 	return 0;
