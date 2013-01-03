@@ -38,7 +38,7 @@
 #include <net/mpls.h>
 #include "mpls_cmd.h"
 
-const struct {
+static const struct {
 	struct nhlfe nhlfe;
 	struct __instr instr[2];
 } pop_peek_nhlfe = {
@@ -51,45 +51,35 @@ const struct {
 		{
 			.data = 1,
 			.cmd = MPLS_ATTR_POP,
-		},
-		{
+		}, {
 			.data = 0,
 			.cmd = MPLS_ATTR_PEEK,
 		},
 	},
 };
 
-const static struct ilm
-ipv4_explicit_null =
-{
-		.key = {
-			.label = 0x0,
-			.owner = RTPROT_BOOT,
-			.tc = 0,
-		},
-		.nhlfe = (struct nhlfe *)&pop_peek_nhlfe.nhlfe,
+static const struct ilm ipv4_explicit_null = {
+	.key = {
+		.label = MPLS_LABEL_EXPLICIT_NULL_IPV4,
+		.owner = RTPROT_BOOT,
+		.tc = 0,
+	},
+	.nhlfe = (struct nhlfe *) &pop_peek_nhlfe.nhlfe,
 };
 
-const static struct ilm
-ipv6_explicit_null =
-{
-		.key = {
-			.label = 0x2,
-			.owner = RTPROT_BOOT,
-			.tc = 0,
-		},
-		.nhlfe = (struct nhlfe *)&pop_peek_nhlfe.nhlfe,
+static const struct ilm ipv6_explicit_null = {
+	.key = {
+		.label = MPLS_LABEL_EXPLICIT_NULL_IPV6,
+		.owner = RTPROT_BOOT,
+		.tc = 0,
+	},
+	.nhlfe = (struct nhlfe *) &pop_peek_nhlfe.nhlfe,
 };
 
-const struct ilm *
-mpls_reserved[MAX_RES_LABEL] = {
-	&ipv4_explicit_null,	/* IPv4 EXPLICIT NULL */
-	NULL,			/* ROUTER ALERT - unimplemented */
-	&ipv6_explicit_null,	/* IPv6 EXPLICIT NULL */
-	NULL,			/* IMPLICIT NULL */
+static const struct ilm *mpls_reserved[MPLS_LABEL_MAX_RESERVED] = {
+	[MPLS_LABEL_EXPLICIT_NULL_IPV4] = &ipv4_explicit_null,
+	[MPLS_LABEL_EXPLICIT_NULL_IPV6] = &ipv6_explicit_null,
 };
-
-#define __is_reserved_label(key) ((key)->label <= MAX_RES_LABEL)
 
 static inline void
 __destroy_ilm_instrs(struct ilm *ilm)
@@ -601,7 +591,7 @@ get_ilm_input(const struct net *net, const struct mpls_key *key)
 	const struct ilm *ilm = NULL;
 
 	/* handle the reserved label range */
-	if (__is_reserved_label(key))
+	if (mpls_is_reserved_label(key->label))
 		ilm = mpls_reserved[key->label];
 	else
 		ilm = get_ilm(net, key, false);
@@ -619,7 +609,7 @@ add_ilm(struct ilmsg *ilm_msg, struct nlattr **instr, const struct net *net)
 	key.tc = ilm_msg->tc;
 	key.owner = ilm_msg->owner;
 
-	if (__is_reserved_label(&key))
+	if (mpls_is_reserved_label(key.label))
 		return ERR_PTR(-EINVAL);
 
 	nhlfe = __nhlfe_build(instr);
@@ -1111,7 +1101,7 @@ mpls_ilm_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	int i;
 
 	rcu_read_lock();
-	for (; cb->args[0] < MAX_RES_LABEL; ++cb->args[0]) {
+	for (; cb->args[0] < MPLS_LABEL_MAX_RESERVED; ++cb->args[0]) {
 		if (likely(mpls_reserved[cb->args[0]])) {
 			if (fill_ilm(skb, mpls_reserved[cb->args[0]], cb->nlh->nlmsg_seq,
 					NETLINK_CREDS(cb->skb)->pid, RTM_NEWROUTE, NLM_F_MULTI) < 0)
@@ -1121,8 +1111,8 @@ mpls_ilm_dump(struct sk_buff *skb, struct netlink_callback *cb)
 
 	t = rcu_dereference(ilmn->h.table);
 
-	for (; (cb->args[0] - MAX_RES_LABEL) < jhash_size(t->htable_bits); cb->args[0]++) {
-		n = hbucket(t, cb->args[0] - MAX_RES_LABEL);
+	for (; (cb->args[0] - MPLS_LABEL_MAX_RESERVED) < jhash_size(t->htable_bits); cb->args[0]++) {
+		n = hbucket(t, cb->args[0] - MPLS_LABEL_MAX_RESERVED);
 
 		for (i = 0; i < n->pos; i++) {
 			ilm = __hash_data_rcu(n, i);

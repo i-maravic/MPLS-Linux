@@ -51,7 +51,16 @@ enum {
 	MPLS_ERR = 0x1,
 };
 
-#define MAX_RES_LABEL (15)
+#define MPLS_LABEL_EXPLICIT_NULL_IPV4	0
+#define MPLS_LABEL_ROUTER_ALERT		1
+#define MPLS_LABEL_EXPLICIT_NULL_IPV6	2
+#define MPLS_LABEL_IMPLICIT_NULL	3
+#define MPLS_LABEL_MAX_RESERVED		15
+
+static inline int mpls_is_reserved_label(u32 label)
+{
+	return label <= MPLS_LABEL_MAX_RESERVED;
+}
 
 #define MAX_HDR_ARRAY_SIZE (10 * MPLS_HDR_LEN)
 

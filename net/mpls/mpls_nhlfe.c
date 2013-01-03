@@ -91,8 +91,14 @@ static MPLS_BUILD_CMD(swap)
 {
 	struct mpls_key *tmp = nla_data(instr);
 	struct mpls_hdr *push = (struct mpls_hdr *)&elem->data;
+	u32 label = tmp->label;
 
-	if (tmp->label == 0 || tmp->tc > TC_MAX)
+	if (tmp->tc > TC_MAX)
+		return -EINVAL;
+
+	if (mpls_is_reserved_label(label) &&
+	    label != MPLS_LABEL_EXPLICIT_NULL_IPV4 &&
+	    label != MPLS_LABEL_EXPLICIT_NULL_IPV6)
 		return -EINVAL;
 
 	push->label_l = htons(tmp->label_l);
