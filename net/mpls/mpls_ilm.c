@@ -729,12 +729,18 @@ decrement_ttl(struct sk_buff *skb, const struct nhlfe *nhlfe)
 			if (unlikely(strip_mpls_headers(skb, &buf) != 0))
 				goto err;
 			buf.nhlfe = nhlfe;
-			if (skb->protocol == htons(ETH_P_IP))
+			switch (skb->protocol) {
+			case htons(ETH_P_IP):
 				__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
 						buf.data_len, ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS, &buf,
 						mpls_push_pending_frames);
-			else
+				break;
+#if IS_ENABLED(CONFIG_IPV6)
+			case htons(ETH_P_IPV6):
 				/* TODO */
+				break;
+#endif
+			}
 			goto err;
 		}
 		MPLSCB(skb)->hdr.ttl = --mplshdr->ttl;
