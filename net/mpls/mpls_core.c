@@ -222,7 +222,8 @@ mpls_sysctl_exit_net(struct net *net)
 
 	table = msn->mpls_hdr->ctl_table_arg;
 	unregister_net_sysctl_table(msn->mpls_hdr);
-	kfree(table);
+	if (!net_eq(net, &init_net))
+		kfree(table);
 }
 
 static struct pernet_operations mpls_sysctl_ops = {
