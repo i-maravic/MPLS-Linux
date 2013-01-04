@@ -919,7 +919,7 @@ static int fill_ilm(struct sk_buff *skb, const struct ilm *ilm,
 	nest = nla_nest_start(skb, RTA_MPLS);
 	if (!nest)
 		goto nla_put_failure;
-	if (__nhlfe_dump(rcu_dereference(ilm->nhlfe), skb))
+	if (__nhlfe_dump(rcu_dereference_rtnl(ilm->nhlfe), skb))
 		goto nla_put_failure;
 	nla_nest_end(skb, nest);
 
@@ -995,9 +995,9 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 	if (nlh->nlmsg_flags & NLM_F_REPLACE)
 		ilm = get_ilm(net, label, tc, true);
 
-	if (ilm) {
+	if (ilm)
 		__nhlfe_free(rtnl_dereference(ilm->nhlfe));
-	} else if (nlh->nlmsg_flags & NLM_F_CREATE) {
+	else if (nlh->nlmsg_flags & NLM_F_CREATE) {
 		ilm = ilm_add(net, label, tc);
 		if (IS_ERR(ilm)) {
 			kfree(nhlfe);
@@ -1005,9 +1005,8 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 		}
 		ilm->label = label;
 		ilm->tc    = tc;
-	} else {
+	} else
 		return -ESRCH;
-	}
 
 	ilm->owner = rtm->rtm_protocol;
 	rcu_assign_pointer(ilm->nhlfe, nhlfe);
@@ -1034,8 +1033,7 @@ mpls_ilm_del(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 	rtm = nlmsg_data(nlh);
 	if (rtm->rtm_src_len != 0 ||
 	    rtm->rtm_dst_len != 32 || !rta[RTA_DST] ||
-	    rtm->rtm_table != RT_TABLE_MAIN ||
-	    rtm->rtm_type != RTN_UNICAST)
+	    rtm->rtm_table != RT_TABLE_MAIN)
 		return -EINVAL;
 
 	label = nla_get_u32(rta[RTA_DST]);
