@@ -56,6 +56,21 @@ static MPLS_COMP_CMD(generic)
 	return lhs->data == rhs->data;
 }
 
+static MPLS_DUMP_CMD(flag)
+{
+	return nla_put_flag(skb, elem->cmd);
+}
+
+static MPLS_DUMP_CMD(u8)
+{
+	return nla_put_u8(skb, elem->cmd, elem->data);
+}
+
+static MPLS_DUMP_CMD(u32)
+{
+	return nla_put_u32(skb, elem->cmd, elem->data);
+}
+
 /*********************************************************************
  * MPLS_CMD_POP
  *********************************************************************/
@@ -67,11 +82,6 @@ static MPLS_BUILD_CMD(pop)
 
 	elem->data = *no_pop = pops;
 	return 0;
-}
-
-static MPLS_DUMP_CMD(pop)
-{
-	return nla_put_u8(skb, MPLS_ATTR_POP, elem->data);
 }
 
 /*********************************************************************
@@ -89,39 +99,21 @@ static MPLS_BUILD_CMD(peek)
  */
 static MPLS_BUILD_CMD(swap)
 {
-	struct mpls_key *tmp = nla_data(instr);
-	struct mpls_hdr *push = (struct mpls_hdr *)&elem->data;
-	u32 label = tmp->label;
-
-	if (tmp->tc > TC_MAX)
-		return -EINVAL;
+	struct mpls_hdr *nl = nla_data(instr);
+	struct mpls_hdr *push = (struct mpls_hdr *) &elem->data;
+	u32 label = mpls_hdr_label(nl);
 
 	if (mpls_is_reserved_label(label) &&
 	    label != MPLS_LABEL_EXPLICIT_NULL_IPV4 &&
 	    label != MPLS_LABEL_EXPLICIT_NULL_IPV6)
 		return -EINVAL;
 
-	push->label_l = htons(tmp->label_l);
-	push->label_u = tmp->label_u;
-	push->tc = tmp->tc;
+	*push = *nl;
 	push->ttl = 0;
 	push->s = 0;
-
 	return 0;
 }
 
-
-static MPLS_DUMP_CMD(swap)
-{
-	struct mpls_hdr *push = (struct mpls_hdr *)&elem->data;
-	struct mpls_key tmp;
-
-	tmp.label_l = ntohs(push->label_l);
-	tmp.label_u = push->label_u;
-	tmp.tc = push->tc;
-
-	return nla_put_u32(skb, MPLS_ATTR_SWAP, *(u32 *)&tmp);
-}
 /*********************************************************************
  * MPLS_CMD_PUSH
  *********************************************************************/
@@ -163,17 +155,17 @@ static MPLS_BUILD_CMD(push)
 	ret = -EINVAL;
 	do {
 		struct mpls_hdr *push = __push->push;
-		struct mpls_key *tmp;
+		struct mpls_hdr *nla;
 		int i;
 		for (i = 0; i < MPLS_PUSH_MAX; i++) {
 			if (!tb[i])
 				continue;
 
-			tmp = nla_data(tb[i]);
+			nla = nla_data(tb[i]);
+			if (mpls_hdr_label(nla) == MPLS_LABEL_IMPLICIT_NULL)
+				goto cleanup;
 
-			push->label_l = htons(tmp->label_l);
-			push->label_u = tmp->label_u;
-			push->tc = tmp->tc;
+			*push = *nla;
 			push->s = 0;
 			push->ttl = 0;
 
@@ -224,7 +216,6 @@ static MPLS_DUMP_CMD(push)
 	int i;
 	int ret = 0;
 	const struct mpls_hdr *push;
-	struct mpls_key req;
 	struct nlattr *nest;
 
 	nest = nla_nest_start(skb, MPLS_ATTR_PUSH);
@@ -233,11 +224,7 @@ static MPLS_DUMP_CMD(push)
 
 	push = __push->push;
 	for (i = MPLS_PUSH_1; i < (__push->no_push + MPLS_PUSH_1); i++) {
-		req.label_l = ntohs(push->label_l);
-		req.label_u = push->label_u;
-		req.tc = push->tc;
-
-		ret = nla_put_u32(skb, i, *(u32 *)&req);
+		ret = nla_put_u32(skb, i, *(u32 *) push);
 		if (unlikely(ret))
 			goto out;
 
@@ -348,24 +335,14 @@ static MPLS_DUMP_CMD(send)
 /*********************************************************************
  * MPLS_CMD_SET_TC
  *********************************************************************/
+#if IS_ENABLED(CONFIG_NET_SCHED)
 static MPLS_BUILD_CMD(tc_index)
 {
-#if IS_ENABLED(CONFIG_NET_SCHED)
 	elem->data = nla_get_u16(instr);
 	return 0;
-#else
-	return -EINVAL;
-#endif
 }
+#endif
 
-static MPLS_DUMP_CMD(tc_index)
-{
-#if IS_ENABLED(CONFIG_NET_SCHED)
-	return nla_put_u16(skb, MPLS_ATTR_TC_INDEX, elem->data);
-#else
-	return -EINVAL;
-#endif
-}
 /*********************************************************************
  * MPLS_CMD_SET_DS
  *********************************************************************/
@@ -377,53 +354,51 @@ static MPLS_BUILD_CMD(dscp)
 	return 0;
 }
 
-static MPLS_DUMP_CMD(dscp)
-{
-	return nla_put_u8(skb, MPLS_ATTR_DSCP, elem->data);
-}
-
 struct mpls_cmd mpls_cmd[] = {
 	[MPLS_ATTR_POP] = {
-			.compare = mpls_comp_generic,
-			.build = mpls_build_pop,
-			.dump = mpls_dump_pop,
+		.compare = mpls_comp_generic,
+		.build = mpls_build_pop,
+		.dump = mpls_dump_u8,
 	},
 	[MPLS_ATTR_DSCP] = {
-			.compare = mpls_comp_generic,
-			.build = mpls_build_dscp,
-			.dump = mpls_dump_dscp,
+		.compare = mpls_comp_generic,
+		.build = mpls_build_dscp,
+		.dump = mpls_dump_u8,
 	},
+#if IS_ENABLED(CONFIG_NET_SCHED)
 	[MPLS_ATTR_TC_INDEX] = {
-			.compare = mpls_comp_generic,
-			.build = mpls_build_tc_index,
-			.dump = mpls_dump_tc_index,
+		.compare = mpls_comp_generic,
+		.build = mpls_build_tc_index,
+		.dump = mpls_dump_u8,
 	},
+#endif
 	[MPLS_ATTR_PUSH] = {
-			.compare = mpls_comp_push,
-			.build = mpls_build_push,
-			.dump = mpls_dump_push,
-			.cleanup = mpls_clean_generic,
+		.compare = mpls_comp_push,
+		.build = mpls_build_push,
+		.dump = mpls_dump_push,
+		.cleanup = mpls_clean_generic,
 	},
 	[MPLS_ATTR_SWAP] = {
-			.compare = mpls_comp_generic,
-			.build = mpls_build_swap,
-			.dump = mpls_dump_swap,
+		.compare = mpls_comp_generic,
+		.build = mpls_build_swap,
+		.dump = mpls_dump_u32,
 	},
 	[MPLS_ATTR_PEEK] = {
-			.compare = mpls_comp_generic,
-			.build = mpls_build_peek,
+		.compare = mpls_comp_generic,
+		.build = mpls_build_peek,
+		.dump = mpls_dump_flag,
 	},
 	[MPLS_ATTR_SEND_IPv4] = {
-			.compare = mpls_comp_send,
-			.build = mpls_build_send,
-			.dump = mpls_dump_send,
-			.cleanup = mpls_clean_generic,
+		.compare = mpls_comp_send,
+		.build = mpls_build_send,
+		.dump = mpls_dump_send,
+		.cleanup = mpls_clean_generic,
 	},
 	[MPLS_ATTR_SEND_IPv6] = {
-			.compare = mpls_comp_send,
-			.build = mpls_build_send,
-			.dump = mpls_dump_send,
-			.cleanup = mpls_clean_generic,
+		.compare = mpls_comp_send,
+		.build = mpls_build_send,
+		.dump = mpls_dump_send,
+		.cleanup = mpls_clean_generic,
 	},
 };
 
@@ -504,7 +479,7 @@ __nhlfe_build(struct nlattr **instr)
 		if (!instr[i])
 			continue;
 
-		if (unlikely(last_able)) {
+		if (unlikely(last_able || mpls_cmd[i].dump == NULL)) {
 			ret = -EINVAL;
 			goto rollback;
 		}
@@ -568,10 +543,7 @@ __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff* skb)
 		int cntr = 0;
 
 		for_each_instr(nhlfe, mi, cntr) {
-			if (likely(mpls_cmd[mi->cmd].dump))
-				ret = mpls_cmd[mi->cmd].dump(skb, mi);
-			else
-				ret = nla_put_flag(skb, mi->cmd);
+			ret = mpls_cmd[mi->cmd].dump(skb, mi);
 			if (unlikely(ret))
 				return ret;
 		}

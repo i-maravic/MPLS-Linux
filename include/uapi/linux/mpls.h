@@ -59,40 +59,31 @@ struct mpls_nh {
 	};
 };
 
-struct mpls_key {
-	union {
-		struct {
+struct mpls_hdr {
+	__be16	label_msb;
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-			__u32 label_u:4;
-			__u32 label_l:16;
+	__u8	s:1;
+	__u8	tc:3;
+	__u8	label_lsb:4;
 #elif defined (__BIG_ENDIAN_BITFIELD)
-			__u32 label_l:16;
-			__u32 label_u:4;
+	__u8	label_lsb:4;
+	__u8	tc:3;
+	__u8	s:1;
 #else
 #error	"Please fix <asm/byteorder.h>"
 #endif
-			__u8 tc:3;
-			__u16 owner:8;
-			__u8 __pad1:1;
-		};
-		struct {
-			__u32 label:20;
-			__u16 __pad2:12;
-		};
-	};
+	__u8	ttl;
 };
 
-struct ilmsg {
-	union {
-		struct {
-			__u8 family;
-			__u8 tc;
-			__u8 owner;   /* Routing protocol */
-			struct mpls_key key;
-		};
-		/* padding to pass rtnetlink min_len check */
-		struct rtmsg __pad;
-	};
-};
+static inline __u32 mpls_hdr_label(const struct mpls_hdr *hdr)
+{
+	return (ntohs(hdr->label_msb) << 4) | hdr->label_lsb;
+}
+
+static inline void mpls_hdr_set_label(struct mpls_hdr *hdr, __u32 label)
+{
+	hdr->label_msb = htons(label >> 4);
+	hdr->label_lsb = label & 0xf;
+}
 
 #endif

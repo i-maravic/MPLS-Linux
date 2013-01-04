@@ -56,10 +56,16 @@ enum {
 #define MPLS_LABEL_EXPLICIT_NULL_IPV6	2
 #define MPLS_LABEL_IMPLICIT_NULL	3
 #define MPLS_LABEL_MAX_RESERVED		15
+#define MPLS_LABEL_MAX_VALID		0xfffff
 
 static inline int mpls_is_reserved_label(u32 label)
 {
 	return label <= MPLS_LABEL_MAX_RESERVED;
+}
+
+static inline int mpls_is_valid_label(u32 label)
+{
+	return label <= MPLS_LABEL_MAX_VALID;
 }
 
 #define MAX_HDR_ARRAY_SIZE (10 * MPLS_HDR_LEN)
@@ -271,7 +277,7 @@ __push_mpls_hdr_payload(struct sk_buff *skb, const struct mpls_hdr_payload *payl
 			goto err;
 
 		skb->protocol = htons(ETH_P_MPLS_UC);
-		label_entry_peek(skb);
+		mpls_peek_label(skb);
 	}
 	memcpy(cb->daddr, payload->daddr, sizeof(payload->daddr));
 
@@ -309,7 +315,7 @@ static __maybe_unused MPLS_DOIT_CMD(pop)
 			mplshdr->ttl = cb->hdr.ttl;
 			mplshdr->tc = cb->hdr.tc;
 
-			label_entry_peek(skb);
+			mpls_peek_label(skb);
 		} else {
 			struct iphdr *iphdr;
 			if (unlikely(pop || !pskb_may_pull(skb, sizeof(struct iphdr))))
@@ -368,18 +374,20 @@ static __maybe_unused MPLS_DOIT_CMD(swap)
 	struct mpls_skb_cb *cb = MPLSCB(skb);
 	struct mpls_hdr *mplshdr;
 	struct mpls_hdr *swap;
+	__u32 label;
 
 	if (skb->protocol != htons(ETH_P_MPLS_UC))
 		goto discard;
 
 	swap = (struct mpls_hdr *)&elem->data;
+	label = mpls_hdr_label(swap);
 
+	mpls_hdr_set_label(&cb->hdr, label);
 	if (unlikely(swap->tc))
 		cb->hdr.tc = swap->tc;
 
 	mplshdr = mpls_hdr(skb);
-	mplshdr->label_l = cb->hdr.label_l = swap->label_l;
-	mplshdr->label_u = cb->hdr.label_u = swap->label_u;
+	mpls_hdr_set_label(mplshdr, label);
 	mplshdr->tc = cb->hdr.tc;
 
 	return MPLS_SUCCESS;
@@ -395,7 +403,6 @@ static __maybe_unused MPLS_DOIT_CMD(push)
 			(struct __push *)rcu_dereference_ulong(elem->data);
 	u8 no_push = __push->no_push;
 	struct mpls_skb_cb *cb = MPLSCB(skb);
-	struct mpls_hdr *mplshdr;
 	struct mpls_hdr *push;
 
 	if (skb->protocol == htons(ETH_P_MPLS_UC))
@@ -413,16 +420,11 @@ static __maybe_unused MPLS_DOIT_CMD(push)
 		skb_push(skb, MPLS_HDR_LEN);
 		skb_reset_network_header(skb);
 
+		mpls_hdr_set_label(&cb->hdr, mpls_hdr_label(push));
 		if (unlikely(push->tc))
 			cb->hdr.tc = push->tc;
 
-		mplshdr = mpls_hdr(skb);
-		mplshdr->label_l = cb->hdr.label_l = push->label_l;
-		mplshdr->label_u = cb->hdr.label_u = push->label_u;
-		mplshdr->tc = cb->hdr.tc;
-		mplshdr->s = cb->hdr.s;
-		mplshdr->ttl = cb->hdr.ttl;
-
+		*mpls_hdr(skb) = cb->hdr;
 		cb->hdr.s = 0;
 	} while (--no_push > 0 && ({push++; 1;}));
 

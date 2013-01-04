@@ -70,22 +70,6 @@ extern struct mpls_ops *mpls_ops;
 #define MPLS_ADD_STATS_BH(net, field, add)							\
 	SNMP_ADD_STATS_BH((net)->mib.mpls_statistics, field, add)
 
-struct mpls_hdr {
-	__be16 label_l;
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u8 s:1;
-	__u8 tc:3;
-	__u8 label_u:4;
-#elif defined (__BIG_ENDIAN_BITFIELD)
-	__u8 label_u:4;
-	__u8 tc:3;
-	__u8 s:1;
-#else
-#error	"Please fix <asm/byteorder.h>"
-#endif
-	__u8 ttl;
-};
-
 static inline struct mpls_hdr *mpls_hdr(const struct sk_buff *skb)
 {
 	return (struct mpls_hdr *)skb_network_header(skb);
@@ -98,16 +82,10 @@ struct mpls_skb_cb {
 
 #define MPLSCB(skb) ((struct mpls_skb_cb *)((skb)->cb))
 
-#define label_entry_peek(skb)							\
-	do {									\
-		struct mpls_skb_cb *cb = MPLSCB(skb);				\
-		struct mpls_hdr *mplsh = mpls_hdr(skb);				\
-		cb->hdr.label_l = mplsh->label_l;				\
-		cb->hdr.label_u = mplsh->label_u;				\
-		cb->hdr.tc = mplsh->tc;						\
-		cb->hdr.s = mplsh->s;						\
-		cb->hdr.ttl = mplsh->ttl;					\
-	} while(0)
+static inline void mpls_peek_label(struct sk_buff *skb)
+{
+	MPLSCB(skb)->hdr = *mpls_hdr(skb);
+}
 
 struct mpls_tunnel {
 	struct nhlfe __rcu *nhlfe;
@@ -134,8 +112,11 @@ struct nhlfe {
 
 struct ilm {
 	struct rcu_head rcu;
-	struct mpls_key key;
 	struct nhlfe __rcu *nhlfe;
+	u32 label;
+	u8 tc;
+	u8 owner;
+	u8 pad[2];
 };
 
 #define MPLS_DEFAULT_TTL 64
