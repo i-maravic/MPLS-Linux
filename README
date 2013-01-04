@@ -70,19 +70,11 @@ $ ip route help
 
 To build MPLS tunnel cross connect and egress points use:
 
-# mpls add label 200 swap 300 dev eth0 192.168.3.3
-
-To get more comprehensive explanation use:
-
-$ mpls help
+# ip -M add 200 mpls swap 300 dev eth0 192.168.3.3
 
 MPLS SNMP stats are located in:
 
 /proc/net/mpls_stats
-
-and also can be seen with:
-
-$ mpls stats
 
 MPLS sysctl parameters are located in:
 
