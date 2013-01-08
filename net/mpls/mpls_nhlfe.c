@@ -460,8 +460,9 @@ __nhlfe_build(struct nlattr **instr)
 	int ret = -EINVAL;
 
 	/* sanity check */
-	if (instr[MPLS_ATTR_PEEK] &&
-			(instr[MPLS_ATTR_SWAP] || instr[MPLS_ATTR_PUSH]))
+	if ((instr[MPLS_ATTR_PEEK] &&
+		(instr[MPLS_ATTR_SWAP] || instr[MPLS_ATTR_PUSH])) ||
+	    (instr[MPLS_ATTR_PEEK] && !instr[MPLS_ATTR_POP]))
 		return ERR_PTR(-EINVAL);
 
 	if (!instr[MPLS_ATTR_INSTR_COUNT])
