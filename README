@@ -70,7 +70,7 @@ $ ip route help
 
 To build MPLS tunnel cross connect and egress points use:
 
-# ip -M add 200 mpls swap 300 dev eth0 192.168.3.3
+# ip -M route add 200 mpls swap 300 dev eth0 192.168.3.3
 
 MPLS SNMP stats are located in:
 
