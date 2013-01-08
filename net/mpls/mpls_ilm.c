@@ -913,7 +913,7 @@ static int fill_ilm(struct sk_buff *skb, const struct ilm *ilm,
 	rtm->rtm_type		= RTN_UNICAST;
 	rtm->rtm_flags		= 0;
 
-	if (nla_put_u8(skb, RTA_DST, ilm->label))
+	if (nla_put_u32(skb, RTA_DST, ilm->label))
 		goto nla_put_failure;
 
 	nest = nla_nest_start(skb, RTA_MPLS);
