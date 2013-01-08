@@ -638,7 +638,7 @@ __fragmentation_allowed(struct sk_buff *skb, const struct nhlfe *nhlfe)
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (ip_hdr->version == 6) {
 		if (skb->len >= IPV6_MIN_MTU ||
-			!ipv6_has_fragment_hdr(skb)) {
+			!ipv6_has_fragment_hdr((struct ipv6hdr *)ip_hdr, skb)) {
 			/* TODO */
 			goto err;
 		}

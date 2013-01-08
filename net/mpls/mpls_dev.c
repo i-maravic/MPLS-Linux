@@ -193,7 +193,7 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 	else if (skb->protocol == htons(ETH_P_IPV6)) {
 		if (mtu < skb->len - tunnel->hlen) {
 			if (mtu >= IPV6_MIN_MTU ||
-				  !ipv6_has_fragment_hdr(skb)) {
+				  !ipv6_has_fragment_hdr(ipv6_hdr(skb), skb)) {
 				icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
 				goto err;
 			} else {

@@ -229,10 +229,10 @@ get_ttl(struct sk_buff *skb)
 
 #if IS_ENABLED(CONFIG_IPV6)
 static bool
-ipv6_has_fragment_hdr(const struct sk_buff *skb)
+ipv6_has_fragment_hdr(const struct ipv6hdr *ip6hdr, const struct sk_buff *skb)
 {
-	unsigned int start = skb_network_offset(skb) + sizeof(struct ipv6hdr);
-	u8 nexthdr = ipv6_hdr(skb)->nexthdr;
+	unsigned int start = skb_network_offset(skb) + sizeof(struct ipv6hdr) + ((unsigned char *)ip6hdr - skb_network_header(skb));
+	u8 nexthdr = ip6hdr->nexthdr;
 
 	while (nexthdr != NEXTHDR_FRAGMENT) {
 		struct ipv6_opt_hdr _hdr, *hp;
@@ -681,7 +681,7 @@ mpls_fragment_packet(struct sk_buff *skb, const struct __instr *mi)
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (skb->protocol == htons(ETH_P_IPV6)) {
-		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(skb));
+		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(ipv6_hdr(skb), skb));
 		return __ip6_fragment(skb, &buf, mpls_finish_send);
 	}
 #endif
