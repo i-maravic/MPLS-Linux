@@ -356,7 +356,7 @@ mpls_tunnel_setup(struct net_device *dev)
 	dev->type = ARPHRD_MPLS;
 	dev->needed_headroom = LL_MAX_HEADER;
 	dev->mtu = ETH_DATA_LEN;
-	dev->flags = IFF_NOARP | IFF_POINTOPOINT;
+	dev->flags = IFF_NOARP | IFF_POINTOPOINT | IFF_MPLS;
 	dev->iflink = 0;
 	dev->addr_len = ETH_ALEN;
 	dev->features |= NETIF_F_NETNS_LOCAL;

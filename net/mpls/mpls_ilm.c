@@ -664,7 +664,8 @@ mpls_recv(struct sk_buff *skb, struct net_device *dev,
 	u32 label;
 	u8 tc;
 
-	if (skb->pkt_type == PACKET_OTHERHOST)
+	if (skb->pkt_type == PACKET_OTHERHOST ||
+		(dev->flags & (IFF_MPLS | IFF_UP)) != (IFF_MPLS | IFF_UP))
 		goto mpls_rcv_drop;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);

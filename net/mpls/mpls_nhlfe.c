@@ -163,11 +163,14 @@ struct dst_entry *nhlfe_get_dst_ipv4(const struct nhlfe *nhlfe,
 				     struct net *net, struct sk_buff *skb)
 {
 	struct dst_entry *dst;
-	struct sockaddr_in *sa;
- 
-	sa = (struct sockaddr_in *) nhlfe->nh;
-	dst = (struct dst_entry *)ip_route_output(dev_net(skb->dev),
-			sa->sin_addr.s_addr, 0, 0, nhlfe->ifindex);
+	struct sockaddr_in *sa = (struct sockaddr_in *) nhlfe->nh;
+	struct flowi4 fl4 = {
+		.flowi4_oif = nhlfe->ifindex,
+		.daddr = sa->sin_addr.s_addr,
+		.flowi4_flags = FLOWI_FLAG_MPLS,
+	};
+
+	dst = (struct dst_entry *)ip_route_output_key(dev_net(skb->dev), &fl4);
 	if (IS_ERR(dst))
 		return NULL;
 
@@ -185,14 +188,12 @@ struct dst_entry *nhlfe_get_dst_ipv6(const struct nhlfe *nhlfe,
 				     struct net *net, struct sk_buff *skb)
 {
 	struct dst_entry *dst;
-	struct flowi6 fl6;
-	struct sockaddr_in6 *sa;
-
-	sa = (struct sockaddr_in6 *) nhlfe->nh;
-
-	memset(&fl6, 0, sizeof(fl6));
-	fl6.flowi6_oif = nhlfe->ifindex;
-	fl6.daddr = sa->sin6_addr;
+	struct sockaddr_in6 *sa = (struct sockaddr_in6 *) nhlfe->nh;
+	struct flowi6 fl6 {
+		.flowi6_oif = nhlfe->ifindex,
+		.daddr = sa->sin6_addr,
+		.flowi6_flags = FLOWI_FLAG_MPLS,
+	}
 
 	dst = ip6_route_output(dev_net(skb->dev), NULL, &fl6);
 	if (!dst || dst->error) {
