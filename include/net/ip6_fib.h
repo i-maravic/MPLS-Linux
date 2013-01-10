@@ -1,8 +1,8 @@
 /*
- *	Linux INET6 implementation 
+ *	Linux INET6 implementation
  *
  *	Authors:
- *	Pedro Roque		<roque@di.fc.ul.pt>	
+ *	Pedro Roque		<roque@di.fc.ul.pt>
  *
  *	This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License
@@ -178,7 +178,7 @@ static inline void rt6_update_expires(struct rt6_info *rt, int timeout)
 	if (!(rt->rt6i_flags & RTF_EXPIRES)) {
 		if (rt->dst.from)
 			dst_release(rt->dst.from);
-		/* dst_set_expires relies on expires == 0 
+		/* dst_set_expires relies on expires == 0
 		 * if it has not been set previously.
 		 */
 		rt->dst.expires = 0;
