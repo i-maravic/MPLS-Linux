@@ -4615,7 +4615,7 @@ int __dev_change_flags(struct net_device *dev, unsigned int flags)
 
 	dev->flags = (flags & (IFF_DEBUG | IFF_NOTRAILERS | IFF_NOARP |
 			       IFF_DYNAMIC | IFF_MULTICAST | IFF_PORTSEL |
-			       IFF_AUTOMEDIA)) |
+			       IFF_AUTOMEDIA | IFF_MPLS)) |
 		     (dev->flags & (IFF_UP | IFF_VOLATILE | IFF_PROMISC |
 				    IFF_ALLMULTI));
 
@@ -4709,7 +4709,7 @@ int dev_change_flags_short(struct net_device *dev, short s_flags)
 {
 	unsigned int flags = dev_get_flags(dev);
 	/* Combine left 16 bits with s_flags */
-	flags = (flags << sizeof(short) >> sizeof(short)) | s_flags;
+	flags = (flags >> (sizeof(s_flags) * 8) << (sizeof(s_flags) * 8)) | s_flags;
 	return dev_change_flags(dev, flags);
 }
 EXPORT_SYMBOL(dev_change_flags_short);
