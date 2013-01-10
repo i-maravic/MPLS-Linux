@@ -1386,6 +1386,11 @@ static int check_leaf(struct fib_table *tb, struct trie *t, struct leaf *l,
 					continue;
 				if (flp->flowi4_oif && flp->flowi4_oif != nh->nh_oif)
 					continue;
+#if IS_ENABLED(CONFIG_MPLS)
+				if ((flp->flowi4_flags & FLOWI_FLAG_MPLS) &&
+					   !(nh->nh_dev->flags & IFF_MPLS))
+					continue;
+#endif
 
 #ifdef CONFIG_IP_FIB_TRIE_STATS
 				t->stats.semantic_match_passed++;

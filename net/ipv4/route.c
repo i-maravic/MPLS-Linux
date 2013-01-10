@@ -1582,7 +1582,7 @@ static int ip_route_input_slow(struct sk_buff *skb, __be32 daddr, __be32 saddr,
 {
 	struct fib_result res;
 	struct in_device *in_dev = __in_dev_get_rcu(dev);
-	struct flowi4	fl4;
+	struct flowi4	fl4 = {{0}};
 	unsigned int	flags = 0;
 	u32		itag = 0;
 	struct rtable	*rth;
@@ -1629,7 +1629,6 @@ static int ip_route_input_slow(struct sk_buff *skb, __be32 daddr, __be32 saddr,
 	/*
 	 *	Now we are ready to route packet.
 	 */
-	fl4.flowi4_oif = 0;
 	fl4.flowi4_iif = dev->ifindex;
 	fl4.flowi4_mark = skb->mark;
 	fl4.flowi4_tos = tos;
@@ -2008,6 +2007,14 @@ struct rtable *__ip_route_output_key(struct net *net, struct flowi4 *fl4)
 			rth = ERR_PTR(-ENETUNREACH);
 			goto out;
 		}
+
+#if IS_ENABLED(CONFIG_MPLS)
+		if ((fl4->flowi4_flags & FLOWI_FLAG_MPLS) &&
+				!(dev_out->flags & IFF_MPLS)) {
+			rth = ERR_PTR(-EPFNOSUPPORT);
+			goto out;
+		}
+#endif
 		if (ipv4_is_local_multicast(fl4->daddr) ||
 		    ipv4_is_lbcast(fl4->daddr)) {
 			if (!fl4->saddr)

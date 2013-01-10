@@ -581,6 +581,12 @@ static struct rt6_info *find_match(struct rt6_info *rt, int oif, int strict,
 	if (m < 0)
 		goto out;
 
+#if IS_ENABLED(CONFIG_MPLS)
+	if ((strict & RT6_LOOKUP_F_MPLS) &&
+			!(rt->dst.dev->flags & IFF_MPLS))
+		goto out;
+#endif
+
 	if (m > *mpri) {
 		if (strict & RT6_LOOKUP_F_REACHABLE)
 			rt6_probe(match);
@@ -866,6 +872,10 @@ static struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 	int reachable = net->ipv6.devconf_all->forwarding ? 0 : RT6_LOOKUP_F_REACHABLE;
 
 	strict |= flags & RT6_LOOKUP_F_IFACE;
+#if IS_ENABLED(CONFIG_MPLS)
+	if (fl6->flowi6_flags & FLOWI_FLAG_MPLS)
+		strict |= flags & RT6_LOOKUP_F_MPLS;
+#endif
 
 relookup:
 	read_lock_bh(&table->tb6_lock);

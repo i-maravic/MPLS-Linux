@@ -31,6 +31,7 @@ struct route_info {
 #define RT6_LOOKUP_F_SRCPREF_TMP	0x00000008
 #define RT6_LOOKUP_F_SRCPREF_PUBLIC	0x00000010
 #define RT6_LOOKUP_F_SRCPREF_COA	0x00000020
+#define RT6_LOOKUP_F_MPLS		0x00000040
 
 /*
  * rt6_srcprefs2flags() and rt6_flags2srcprefs() translate

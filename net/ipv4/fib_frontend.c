@@ -245,11 +245,10 @@ static int __fib_validate_source(struct sk_buff *skb, __be32 src, __be32 dst,
 {
 	int ret, no_addr, accept_local;
 	struct fib_result res;
-	struct flowi4 fl4;
+	struct flowi4 fl4 = {{0}};
 	struct net *net;
 	bool dev_match;
 
-	fl4.flowi4_oif = 0;
 	fl4.flowi4_iif = oif;
 	fl4.daddr = src;
 	fl4.saddr = dst;
