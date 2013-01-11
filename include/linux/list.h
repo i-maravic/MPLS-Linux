@@ -119,7 +119,7 @@ extern void list_del(struct list_head *entry);
  *
  * If @old was empty, it will be overwritten.
  */
-static inline void list_replace(struct list_head *old,
+static inline void list_replace(const struct list_head *old,
 				struct list_head *new)
 {
 	new->next = old->next;
