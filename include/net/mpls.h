@@ -43,8 +43,8 @@
 extern int sysctl_mpls_default_ttl;
 
 struct mpls_ops {
-	struct net_device *	(*mpls_master_dev) (struct net* net);
-	struct nhlfe *		(*nhlfe_build) (struct nlattr *mpls);
+	struct net_device *	(*mpls_master_dev) (const struct net* net);
+	struct nhlfe *		(*nhlfe_build) (const struct net* net, struct nlattr *mpls);
 	void			(*nhlfe_free) (struct nhlfe *nhlfe);
 	int 			(*nhlfe_dump) (const struct nhlfe *nhlfe,
 						struct sk_buff *skb);
@@ -104,7 +104,12 @@ struct nhlfe {
 	u8 dead;
 	u8 num_push;
 	u8 num_pop;
-	u8 pad[3];
+	u8 pad[1];
+	u8 global;
+	u8 tc;
+	u32 label;
+	struct net *net;
+	struct hlist_node portal;
 	struct nlattr data[0];
 };
 
@@ -117,15 +122,51 @@ struct ilm {
 	u8 pad[2];
 };
 
+extern int ilm_net_id;
+
+/* A hash bucket */
+struct hbucket {
+	struct ilm __rcu *ilm;	/* the array of the values */
+	u8 size;		/* size of the array */
+	u8 pos;			/* position of the first free entry */
+};
+
+/* The hash table: the table size stored here in order to make resizing easy */
+struct htable {
+	union {
+		struct rcu_head rcu;
+		struct work_struct work;
+	};
+	u8 htable_bits;		/* size of hash table == 2^htable_bits */
+	struct hbucket bucket[0]; /* hashtable buckets */
+};
+
+/* The hash structure */
+struct ilm_hash {
+	struct htable __rcu *table; /* the hash table */
+	u32 elements;		/* current element */
+	u32 initval;		/* random jhash init value */
+	u8 hash_max;		/* max elements in an array block */
+};
+
+/* Per-net hash tables */
+struct ilm_net {
+	struct ilm_hash h;
+	struct hlist_head portal;
+	u32 pid;
+	char name[MPLS_NETNS_NAME_MAX];
+};
+
 #define MPLS_DEFAULT_TTL 64
 
 extern struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX];
 
-static inline void
+static inline struct nhlfe *
 nhlfe_hold(struct nhlfe *nhlfe)
 {
 	WARN_ON(nhlfe->dead);
 	atomic_inc(&nhlfe->refcnt);
+	return nhlfe;
 }
 
 static inline void
@@ -137,9 +178,9 @@ nhlfe_put(struct nhlfe *nhlfe)
 	}
 }
 
-struct net_device *__mpls_master_dev(struct net* net);
+struct net_device *__mpls_master_dev(const struct net* net);
 void __nhlfe_free(struct nhlfe *nhlfe);
-struct nhlfe *__nhlfe_build(struct nlattr *instr);
+struct nhlfe *__nhlfe_build(const struct net *net, struct nlattr *instr);
 int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
 bool __nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs);
 
@@ -194,7 +235,7 @@ int mpls_recv(struct sk_buff *skb, struct net_device *dev,
 		struct packet_type *ptype, struct net_device *orig);
 
 #define mpls_get_master_dev(net) (mpls_ops ? mpls_ops->mpls_master_dev(net) : NULL)
-#define nhlfe_build(instr) (mpls_ops ? mpls_ops->nhlfe_build(instr) : ERR_PTR(-EPIPE))
+#define nhlfe_build(net, instr) (mpls_ops ? mpls_ops->nhlfe_build(net, instr) : ERR_PTR(-EPIPE))
 #define nhlfe_free(nhlfe) ({if (mpls_ops) mpls_ops->nhlfe_free(nhlfe); })
 #define nhlfe_dump(nhlfe, skb) (mpls_ops ? mpls_ops->nhlfe_dump(nhlfe, skb) : 0)
 #define mpls_policy (mpls_ops ? mpls_ops->nhlfe_policy : NULL)

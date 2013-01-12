@@ -189,13 +189,13 @@ struct dst_entry *nhlfe_get_dst_ipv6(const struct nhlfe *nhlfe,
 {
 	struct dst_entry *dst;
 	struct sockaddr_in6 *sa = (struct sockaddr_in6 *) nhlfe->nh;
-	struct flowi6 fl6 {
+	struct flowi6 fl6 = {
 		.flowi6_oif = nhlfe->ifindex,
 		.daddr = sa->sin6_addr,
 		.flowi6_flags = FLOWI_FLAG_MPLS,
-	}
+	};
 
-	dst = ip6_route_output(dev_net(skb->dev), NULL, &fl6);
+	dst = ip6_route_output(net, NULL, &fl6);
 	if (!dst || dst->error) {
 		dst_release(dst);
 		return NULL;
@@ -243,6 +243,7 @@ int strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload)
 	memcpy(payload->daddr, cb->daddr, sizeof(cb->daddr));
 
 	if (skb->protocol == htons(ETH_P_IP)
+
 #if IS_ENABLED(CONFIG_IPV6)
 		|| skb->protocol == htons(ETH_P_IPV6)
 #endif
@@ -397,19 +398,23 @@ void __nhlfe_free(struct nhlfe *nhlfe)
 
 	WARN_ON(nhlfe->dead);
 	nhlfe->dead = 1;
+	if (nhlfe->net)
+		release_net(nhlfe->net);
 
 	if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
 		kfree_rcu(nhlfe, rcu);
 }
 
 
-struct nhlfe * __nhlfe_build(struct nlattr *attr)
+struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr)
 {
 	struct nlattr *i;
 	struct nhlfe *nhlfe;
+	struct ilm_net *ilmn = NULL;
 	int remaining;
 	int prev = MPLSA_UNSPEC;
 	int has_swap = 0;
+	int error = -EINVAL;
 
 	nhlfe = nhlfe_alloc(attr);
 	if (IS_ERR(nhlfe))
@@ -435,7 +440,61 @@ struct nhlfe * __nhlfe_build(struct nlattr *attr)
 		case MPLSA_PUSH:
 			nhlfe->num_push = nla_len(i) / MPLS_HDR_LEN;
 			break;
+		case MPLSA_NETNS_FD:
+			if (!net_eq(&init_net, net))
+				goto err;
+
+			nhlfe->net = get_net_ns_by_fd(nla_get_u32(i));
+
+			if (IS_ERR(nhlfe->net)) {
+				error = PTR_ERR(nhlfe->net);
+				goto err;
+			}
+
+			put_net(nhlfe->net);
+			break;
+		case MPLSA_NETNS_NAME:
+			if (!nhlfe->net)
+				goto err;
+
+			ilmn = net_generic(nhlfe->net, ilm_net_id);
+			nla_strlcpy(ilmn->name, i, MPLS_NETNS_NAME_MAX);
+			break;
+		case MPLSA_NETNS_PID:
+			if (!net_eq(&init_net, net) || nhlfe->net)
+				goto err;
+
+			nhlfe->net = get_net_ns_by_fd(nla_get_u32(i));
+
+			if (IS_ERR(nhlfe->net)) {
+				error = PTR_ERR(nhlfe->net);
+				goto err;
+			}
+
+			ilmn = net_generic(nhlfe->net, ilm_net_id);
+			ilmn->pid = nla_get_u32(i);
+
+			put_net(nhlfe->net);
+			break;
+		case MPLSA_NEXTHOP_GLOBAL:
+			nhlfe->global = 1;
+			break;
+		case MPLSA_NEXTHOP_IFNAME:
+			{
+				struct net_device *dev;
+				if (!nhlfe->global)
+					goto err;
+				dev = dev_get_by_name_rcu(&init_net, nla_data(i));
+				if (!dev) {
+					error = -ENODEV;
+					goto err;
+				}
+				nhlfe->ifindex = dev->ifindex;
+			}
+			break;
 		case MPLSA_NEXTHOP_OIF:
+			if (nhlfe->ifindex)
+				goto err;
 			nhlfe->ifindex = nla_get_u32(i);
 			break;
 		case MPLSA_NEXTHOP_ADDR:
@@ -461,14 +520,22 @@ struct nhlfe * __nhlfe_build(struct nlattr *attr)
 	}
 
 	if (nhlfe->nh == NULL) {
-		if (nhlfe->num_push || has_swap)
+		if (nhlfe->num_push || has_swap || !nhlfe->num_pop)
 			goto err;
+	}
+
+	if (nhlfe->net) {
+		if (net_eq(&init_net, nhlfe->net))
+			goto err;
+
+		hlist_add_head_rcu(&nhlfe->portal, &ilmn->portal);
+		hold_net(nhlfe->net);
 	}
 
 	return nhlfe;
 err:
 	kfree(nhlfe);
-	return ERR_PTR(-EINVAL);
+	return ERR_PTR(error);
 }
 
 struct dst_entry *nhlfe_get_nexthop_dst(const struct nhlfe *nhlfe, struct net *net, struct sk_buff *skb)
@@ -596,9 +663,8 @@ static int mpls_push(struct sk_buff *skb, struct mpls_hdr *push, int num_push)
 	return NET_XMIT_SUCCESS;
 }
 
-static int mpls_receive_local(struct sk_buff *skb)
+static int mpls_receive_local(struct sk_buff *skb, const struct net *net)
 {
-	struct net *net = dev_net(skb->dev);
 	int header_len = MPLS_HDR_LEN, ret;
 
 	if (skb->protocol == htons(ETH_P_IP))
@@ -608,7 +674,7 @@ static int mpls_receive_local(struct sk_buff *skb)
 		header_len = sizeof(struct ipv6hdr);
 #endif
 
-	ret = mpls_prepare_skb(skb, header_len, net->loopback_dev);
+	ret = mpls_prepare_skb(skb, header_len, __mpls_master_dev(net));
 	if (unlikely(ret)) {
 		MPLS_INC_STATS_BH(net, MPLS_MIB_OUTDISCARDS);
 		dev_kfree_skb(skb);
@@ -682,6 +748,8 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	int mpls_delta_headroom = (nhlfe->num_push - nhlfe->num_pop) * MPLS_HDR_LEN;
 	unsigned int mpls_headroom = (mpls_delta_headroom > 0) ? mpls_delta_headroom : 0;
 	struct dst_entry *dst = NULL;
+	struct net *net = nhlfe->global ? &init_net : dev_net(skb->dev);
+	struct net *rnet = dev_net(skb->dev);
 
 	/* FIXME: if doing swap or pop, we need to use skb_cow as we are
 	 * rewriting the mpls entry which are not in headroom; should also
@@ -689,7 +757,7 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	if (skb_cow_head(skb, mpls_headroom) < 0)
 		goto free_skb;
 
-	dst = nhlfe_get_nexthop_dst(nhlfe, dev_net(skb->dev), skb);
+	dst = nhlfe_get_nexthop_dst(nhlfe, net, skb);
 	if (IS_ERR(dst)) {
 		err = PTR_ERR(dst);
 		goto free_skb;
@@ -741,7 +809,13 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 		case MPLSA_PUSH:
 			err = mpls_push(skb, nla_data(i), nla_len(i) / MPLS_HDR_LEN);
 			break;
+		case MPLSA_NETNS_FD:
+		case MPLSA_NETNS_PID:
+		case MPLSA_NETNS_NAME:
+			rnet = nhlfe->net;
+			break;
 		case MPLSA_NEXTHOP_OIF:
+		case MPLSA_NEXTHOP_IFNAME:
 		case MPLSA_NEXTHOP_ADDR:
 			break;
 		default:
@@ -752,7 +826,7 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	}
 
 	if (nhlfe->nh == NULL)
-		err = mpls_receive_local(skb);
+		err = mpls_receive_local(skb, rnet);
 	else
 		err = mpls_send(skb, nhlfe);
 	if (unlikely(err))

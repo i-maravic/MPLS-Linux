@@ -1288,10 +1288,8 @@ static void rt_set_nexthop(struct rtable *rt, __be32 daddr,
 		rt->dst.tclassid = nh->nh_tclassid;
 #endif
 #if IS_ENABLED(CONFIG_MPLS)
-		if (nh->nhlfe) {
-			nhlfe_hold(nh->nhlfe);
-			rcu_assign_pointer(rt->dst.nhlfe, nh->nhlfe);
-		}
+		if (nh->nhlfe)
+			rcu_assign_pointer(rt->dst.nhlfe, nhlfe_hold(nh->nhlfe));
 #endif
 		if (unlikely(fnhe))
 			cached = rt_bind_exception(rt, fnhe, daddr);

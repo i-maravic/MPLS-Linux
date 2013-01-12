@@ -42,7 +42,7 @@ struct mpls_dev_net {
 };
 
 struct net_device *
-__mpls_master_dev(struct net* net)
+__mpls_master_dev(const struct net* net)
 {
 	struct mpls_dev_net *mdn = net_generic(net, mpls_dev_net_id);
 	return mdn->master_dev;
@@ -244,6 +244,7 @@ mpls_tunnel_bind_dev(struct net_device *dev)
 	const struct nhlfe *nhlfe;
 	struct mpls_tunnel *tunnel;
 	struct net_device *tdev = NULL;
+	struct net *net;
 	struct dst_entry *dst;
 	int hlen = LL_MAX_HEADER;
 	int mtu = ETH_DATA_LEN;
@@ -255,14 +256,15 @@ mpls_tunnel_bind_dev(struct net_device *dev)
 	addend = nhlfe->num_push * MPLS_HDR_LEN;
 
 	link = nhlfe->ifindex;
-	dst = nhlfe_get_nexthop_dst(nhlfe, dev_net(dev), NULL);
+	net = nhlfe->global ? &init_net : dev_net(dev);
+	dst = nhlfe_get_nexthop_dst(nhlfe, net, NULL);
 	if (!IS_ERR(dst)) {
 		tdev = dst->dev;
 		dst_release(dst);
 	}
 
 	if (!tdev && link)
-		tdev = __dev_get_by_index(dev_net(dev), link);
+		tdev = __dev_get_by_index(net, link);
 
 	if (tdev) {
 		hlen = tdev->hard_header_len + tdev->needed_headroom;
@@ -292,7 +294,8 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 	if (dev == mdn->master_dev)
 		return -EINVAL;
 
-	nhlfe = __nhlfe_build(tb[IFLA_INFO_DATA]);
+	nhlfe = __nhlfe_build(dev_net(dev), tb[IFLA_INFO_DATA]);
+
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 
@@ -320,7 +323,8 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 	int mtu;
 	int err;
 
-	nhlfe = __nhlfe_build(tb[IFLA_INFO_DATA]);
+	nhlfe = __nhlfe_build(src_net, tb[IFLA_INFO_DATA]);
+
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 

@@ -522,7 +522,8 @@ static int fib_get_nhs(struct fib_info *fi, struct rtnexthop *rtnh,
 				if (tb[MPLSA_POP] || tb[MPLSA_SWAP] || !tb[MPLSA_NEXTHOP_ADDR])
 					return -EINVAL;
 
-				nhlfe = nhlfe_build(nla);
+				nhlfe = nhlfe_build(fi->fib_net, nla);
+
 				if (IS_ERR(nhlfe))
 					return PTR_ERR(nhlfe);
 
@@ -561,7 +562,7 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy))
 				return 1;
 
-			nhlfe = nhlfe_build(cfg->fc_nhlfe);
+			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe);
 			if (IS_ERR(nhlfe))
 				return 1;
 
@@ -622,7 +623,8 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 					if (nla_parse_nested(tb, MPLS_ATTR_MAX, nla, mpls_policy))
 						return 1;
 
-					nhlfe = nhlfe_build(nla);
+					nhlfe = nhlfe_build(fi->fib_net, nla);
+
 					if (IS_ERR(nhlfe))
 						return 1;
 
@@ -993,7 +995,8 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 			if (tb[MPLSA_POP] || tb[MPLSA_SWAP] || !tb[MPLSA_NEXTHOP_ADDR])
 				goto err_inval;
 
-			nhlfe = nhlfe_build(cfg->fc_nhlfe);
+			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe);
+
 			if (IS_ERR(nhlfe)) {
 				err = PTR_ERR(nhlfe);
 				goto failure;

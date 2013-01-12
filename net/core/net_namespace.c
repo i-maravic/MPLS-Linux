@@ -345,6 +345,7 @@ struct net *get_net_ns_by_fd(int fd)
 	fput(file);
 	return net;
 }
+EXPORT_SYMBOL_GPL(get_net_ns_by_fd);
 
 #else
 struct net *copy_net_ns(unsigned long flags, struct net *old_net)
@@ -504,7 +505,7 @@ again:
 
 static void unregister_pernet_operations(struct pernet_operations *ops)
 {
-	
+
 	__unregister_pernet_operations(ops);
 	rcu_barrier();
 	if (ops->id)

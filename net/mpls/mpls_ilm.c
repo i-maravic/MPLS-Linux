@@ -30,6 +30,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_arp.h>
 #include <linux/if_packet.h>
+#include <linux/list.h>
 #include <linux/rcupdate.h>
 #include <linux/jhash.h>
 #include <net/net_namespace.h>
@@ -37,6 +38,8 @@
 #include <net/route.h>
 #include <net/mpls.h>
 #include "mpls_cmd.h"
+
+int ilm_net_id __read_mostly;
 
 static const struct {
 	struct nhlfe	nhlfe;
@@ -96,38 +99,6 @@ ilm_copy(struct ilm *dst, const struct ilm *src)
  * are serialized by the rtnl mutex. Read side must be protected by
  * proper RCU locking.
  */
-
-/* A hash bucket */
-struct hbucket {
-	struct ilm __rcu *ilm;	/* the array of the values */
-	u8 size;		/* size of the array */
-	u8 pos;			/* position of the first free entry */
-};
-
-/* The hash table: the table size stored here in order to make resizing easy */
-struct htable {
-	union {
-		struct rcu_head rcu;
-		struct work_struct work;
-	};
-	u8 htable_bits;		/* size of hash table == 2^htable_bits */
-	struct hbucket bucket[0]; /* hashtable buckets */
-};
-
-/* The hash structure */
-struct ilm_hash {
-	struct htable __rcu *table; /* the hash table */
-	u32 elements;		/* current element */
-	u32 initval;		/* random jhash init value */
-	u8 hash_max;		/* max elements in an array block */
-};
-
-static int ilm_net_id __read_mostly;
-
-/* Per-net hash tables */
-struct ilm_net {
-	struct ilm_hash h;
-};
 
 /* Number of elements to store in an initial array block */
 #define HASH_INIT_SIZE			4
@@ -210,13 +181,12 @@ __hbucket_free(struct hbucket *bucket, bool leave_instr)
 {
 	int j;
 	struct hbucket *n = bucket;
-	struct ilm *ilm = rtnl_dereference(n->ilm);
 
 	for (j = 0; j < n->size && !leave_instr; j++)
-		__destroy_ilm_instrs(ilm);
+		__destroy_ilm_instrs(__hash_data_rtnl(n, j));
 
 	if (n->size)
-		kfree(ilm);
+		kfree(__hash_data_rtnl(n, 0));
 }
 
 static inline void
@@ -224,13 +194,12 @@ __hbucket_free_rcu(struct hbucket *bucket, bool leave_instr)
 {
 	int j;
 	struct hbucket *n = bucket;
-	struct ilm *ilm = rtnl_dereference(n->ilm);
 
 	for (j = 0; j < n->size && !leave_instr; j++)
-		__destroy_ilm_instrs(ilm);
+		__destroy_ilm_instrs(__hash_data_rtnl(n, j));
 
 	if (n->size)
-		kfree_rcu(ilm, rcu);
+		kfree_rcu(__hash_data_rtnl(n, 0), rcu);
 }
 
 static size_t
@@ -359,9 +328,8 @@ __ilm_add(struct hbucket *n, u32 label, u8 tc, u8 hash_max)
 }
 
 static inline void
-ilm_hash_destroy(struct net *net)
+ilm_hash_destroy(struct ilm_net *ilmn)
 {
-	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
 	struct ilm_hash *h = &ilmn->h;
 
 	__hash_destroy_rcu(rtnl_dereference(h->table), false);
@@ -461,10 +429,11 @@ retry:
 		ret = ilm_hash_resize(net);
 		if (likely(!ret))
 			goto retry;
-	} else {
+	} else
 		h->elements++;
-	}
 
+	ilm->label = label;
+	ilm->tc = tc;
 	return ilm;
 }
 
@@ -504,8 +473,9 @@ ilm_del(const struct net *net, u32 label, u8 tc, struct ilm *ilm)
 		h->elements--;
 
 		if (n->pos + HASH_INIT_SIZE < n->size) {
-			struct ilm *tmp =
-				kzalloc((n->size - HASH_INIT_SIZE) * sizeof(struct ilm), GFP_KERNEL | __GFP_NOWARN);
+			struct ilm *tmp;
+
+			tmp = kzalloc((n->size - HASH_INIT_SIZE) * sizeof(struct ilm), GFP_KERNEL | __GFP_NOWARN);
 			if (unlikely(!tmp))
 				return 0;
 
@@ -564,6 +534,10 @@ static struct nla_policy ilm_policy[__MPLS_ATTR_MAX] __read_mostly = {
 	[MPLSA_TC_INDEX]	= { .type = NLA_U16 },
 	[MPLSA_SWAP]		= { .type = NLA_U32 },
 	[MPLSA_PUSH]		= { .type = NLA_BINARY },
+	[MPLSA_NETNS_FD]	= { .type = NLA_U32 },
+	[MPLSA_NETNS_PID]	= { .type = NLA_U32 },
+	[MPLSA_NETNS_NAME]	= { .type = NLA_STRING, .len = MPLS_NETNS_NAME_MAX },
+	[MPLSA_NEXTHOP_IFNAME]	= { .type = NLA_STRING, .len = IFNAMSIZ },
 	[MPLSA_NEXTHOP_OIF]	= { .type = NLA_U32 },
 	[MPLSA_NEXTHOP_ADDR]	= { .type = NLA_BINARY },
 };
@@ -642,7 +616,13 @@ mpls_input(struct sk_buff *skb, struct net_device *dev, u32 label, u8 tc)
 		/* FIXME: make sure decremented ttl is flushed out to skb */
 		MPLSCB(skb)->hdr.ttl--;
 	}
-	ret = (nhlfe_send(nhlfe, skb) == NET_XMIT_SUCCESS) ? NET_RX_SUCCESS : NET_RX_DROP;
+	ret = nhlfe_send(nhlfe, skb);
+
+	if (ret == NET_XMIT_SUCCESS)
+		ret = NET_RX_SUCCESS;
+	else
+		ret = NET_RX_DROP;
+
 	rcu_read_unlock();
 
 	return ret;
@@ -686,6 +666,7 @@ mpls_recv(struct sk_buff *skb, struct net_device *dev,
 	case ARPHRD_IEEE802:
 	case ARPHRD_PPP:
 	case ARPHRD_LOOPBACK:
+	case ARPHRD_MPLS:
 	case ARPHRD_HDLC:
 	case ARPHRD_IPGRE:
 		label = mpls_hdr_label(&cb->hdr);
@@ -757,17 +738,19 @@ static void
 ilm_event(struct nlmsghdr *nlh, struct net *net, const struct ilm *ilm, int event)
 {
 	struct sk_buff *skb;
+	__u32 seq = nlh ? nlh->nlmsg_seq : 0;
+	__u32 pid = nlh ? nlh->nlmsg_pid : 0;
 	int err = -ENOBUFS;
 
 	skb = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
 	if (!skb)
 		goto fail;
 
-	err = fill_ilm(skb, ilm, nlh->nlmsg_seq, nlh->nlmsg_pid, event, 0);
+	err = fill_ilm(skb, ilm, seq, pid, event, 0);
 	if (err < 0)
 		goto fail;
 
-	rtnl_notify(skb, net, nlh->nlmsg_pid, RTNLGRP_MPLS, nlh, GFP_KERNEL);
+	rtnl_notify(skb, net, pid, RTNLGRP_MPLS, nlh, GFP_KERNEL);
 	return;
 fail:
 	if (err < 0)
@@ -810,7 +793,8 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 	if (err < 0)
 		return err;
 
-	nhlfe = __nhlfe_build(rta[RTA_MPLS]);
+	nhlfe = __nhlfe_build(net, rta[RTA_MPLS]);
+
 	if (IS_ERR(nhlfe))
 		return PTR_ERR(nhlfe);
 
@@ -825,10 +809,13 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 			kfree(nhlfe);
 			return PTR_ERR(ilm);
 		}
-		ilm->label = label;
-		ilm->tc    = tc;
 	} else
 		return -ESRCH;
+
+	if (nhlfe->net) {
+		nhlfe->label = ilm->label;
+		nhlfe->tc = ilm->tc;
+	}
 
 	ilm->owner = rtm->rtm_protocol;
 	rcu_assign_pointer(ilm->nhlfe, nhlfe);
@@ -919,7 +906,9 @@ static int __net_init ilm_init_net(struct net *net)
 	size_t hsize;
 	u8 hbits;
 
-	memset(&ilmn->h, 0, sizeof(ilmn->h));
+	memset(ilmn, 0, sizeof(*ilmn));
+
+	INIT_HLIST_HEAD(&ilmn->portal);
 
 	get_random_bytes(&ilmn->h.initval, sizeof(ilmn->h.initval));
 
@@ -936,8 +925,17 @@ static int __net_init ilm_init_net(struct net *net)
 
 static void __net_exit ilm_exit_net(struct net *net)
 {
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
+	struct nhlfe *nhlfe;
+	struct hlist_node *pos, *n;
 	rtnl_lock();
-	ilm_hash_destroy(net);
+
+	ilm_hash_destroy(ilmn);
+
+	if (likely(!net_eq(&init_net, net)))
+		hlist_for_each_entry_safe(nhlfe, pos, n, &ilmn->portal, portal)
+			ilm_del(&init_net, nhlfe->label, nhlfe->tc, NULL);
+
 	rtnl_unlock();
 }
 
