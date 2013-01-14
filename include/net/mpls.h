@@ -164,8 +164,10 @@ extern struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX];
 static inline struct nhlfe *
 nhlfe_hold(struct nhlfe *nhlfe)
 {
-	WARN_ON(nhlfe->dead);
-	atomic_inc(&nhlfe->refcnt);
+	if (likely(nhlfe)) {
+		WARN_ON(nhlfe->dead);
+		atomic_inc(&nhlfe->refcnt);
+	}
 	return nhlfe;
 }
 

@@ -47,6 +47,9 @@ struct fib6_config {
 	unsigned long	fc_expires;
 	struct nlattr	*fc_mx;
 	int		fc_mx_len;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nlattr	*fc_nhlfe;
+#endif
 
 	struct nl_info	fc_nlinfo;
 };
