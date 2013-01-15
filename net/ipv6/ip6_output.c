@@ -1483,7 +1483,22 @@ static void ip6_cork_release(struct inet_sock *inet, struct ipv6_pinfo *np)
 	memset(&inet->cork.fl, 0, sizeof(inet->cork.fl));
 }
 
-int ip6_push_pending_frames(struct sock *sk)
+static int ip6_send_skb(struct net *net, struct sk_buff *skb)
+{
+	int err;
+
+	err = ip6_local_out(skb);
+	if (err) {
+		if (err > 0)
+			err = net_xmit_errno(err);
+		if (err)
+			IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)), IPSTATS_MIB_OUTDISCARDS);
+	}
+
+	return err;
+}
+
+struct sk_buff *ip6_finish_skb(struct sock *sk)
 {
 	struct sk_buff *skb, *tmp_skb;
 	struct sk_buff **tail_skb;
@@ -1548,21 +1563,21 @@ int ip6_push_pending_frames(struct sock *sk)
 		ICMP6MSGOUT_INC_STATS_BH(net, idev, icmp6_hdr(skb)->icmp6_type);
 		ICMP6_INC_STATS_BH(net, idev, ICMP6_MIB_OUTMSGS);
 	}
-
-	err = ip6_local_out(skb);
-	if (err) {
-		if (err > 0)
-			err = net_xmit_errno(err);
-		if (err)
-			goto error;
-	}
-
 out:
 	ip6_cork_release(inet, np);
-	return err;
-error:
-	IP6_INC_STATS(net, rt->rt6i_idev, IPSTATS_MIB_OUTDISCARDS);
-	goto out;
+	return skb;
+}
+EXPORT_SYMBOL(ip6_finish_skb);
+
+int ip6_push_pending_frames(struct sock *sk)
+{
+	struct sk_buff *skb;
+
+	skb = ip6_finish_skb(sk);
+	if (!skb)
+		return 0;
+
+	return ip6_send_skb(sock_net(sk), skb);
 }
 EXPORT_SYMBOL_GPL(ip6_push_pending_frames);
 

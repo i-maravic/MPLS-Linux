@@ -690,6 +690,8 @@ extern int			ip6_append_data(struct sock *sk,
 						unsigned int flags,
 						int dontfrag);
 
+extern struct sk_buff *	ip6_finish_skb(struct sock *sk);
+
 extern int			ip6_push_pending_frames(struct sock *sk);
 
 extern void			ip6_flush_pending_frames(struct sock *sk);
