@@ -39,29 +39,6 @@ MODULE_LICENSE("GPL");
 
 int sysctl_mpls_default_ttl __read_mostly = MPLS_DEFAULT_TTL;
 
-struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX] __read_mostly = {
-	[MPLS_ATTR_DSCP] = { .type = NLA_U8 },
-	[MPLS_ATTR_TC_INDEX] = { .type = NLA_U16, },
-	[MPLS_ATTR_PUSH] = { .type = NLA_NESTED, },
-	[MPLS_ATTR_SEND_IPv4] = { .len = sizeof(struct mpls_nh), },
-	[MPLS_ATTR_SEND_IPv6] = { .len = sizeof(struct mpls_nh), },
-	[MPLS_ATTR_INSTR_COUNT] = { .type = NLA_U8, },
-};
-
-bool
-__mpls_nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs)
-{
-	if (!rhs && !lhs)
-		return true;
-	else if (rhs && lhs) {
-		if (lhs->no_push == rhs->no_push &&
-			lhs->no_pop == rhs->no_pop &&
-			nhlfe_instr_eq(lhs, rhs))
-			return true;
-	}
-	return false;
-}
-
 /**
  * PROC
  */
@@ -304,12 +281,12 @@ static struct packet_type mpls_uc_packet_type = {
 };
 
 static struct mpls_ops __mpls_ops = {
-	.nhlfe_build = __nhlfe_build,
-	.nhlfe_free = __nhlfe_free,
-	.nhlfe_dump = __nhlfe_dump,
 	.mpls_master_dev = __mpls_master_dev,
-	.mpls_nhlfe_eq = __mpls_nhlfe_eq,
-	.nhlfe_policy = __nhlfe_policy
+	.nhlfe_build	= __nhlfe_build,
+	.nhlfe_free	= __nhlfe_free,
+	.nhlfe_dump	= __nhlfe_dump,
+	.nhlfe_eq	= __nhlfe_eq,
+	.nhlfe_policy	= __nhlfe_policy
 };
 
 static int __init mpls_init_module(void)

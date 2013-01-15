@@ -43,14 +43,14 @@
 extern int sysctl_mpls_default_ttl;
 
 struct mpls_ops {
-	struct nhlfe		*(*nhlfe_build) (struct nlattr **instr);
+	struct net_device *	(*mpls_master_dev) (struct net* net);
+	struct nhlfe *		(*nhlfe_build) (struct nlattr *mpls);
 	void			(*nhlfe_free) (struct nhlfe *nhlfe);
 	int 			(*nhlfe_dump) (const struct nhlfe *nhlfe,
 						struct sk_buff *skb);
-	struct net_device	*(*mpls_master_dev) (struct net* net);
-	bool			(*mpls_nhlfe_eq) (struct nhlfe *lhs,
-						  struct nhlfe *rhs);
-	struct nla_policy	*nhlfe_policy;
+	bool			(*nhlfe_eq) (struct nhlfe *lhs,
+					     struct nhlfe *rhs);
+	struct nla_policy *	nhlfe_policy;
 };
 
 extern struct mpls_ops *mpls_ops;
@@ -93,21 +93,19 @@ struct mpls_tunnel {
 	struct net_device_stats stats;
 };
 
-struct __instr {
-	unsigned long data;
-	u16 cmd;
-};
-
 struct nhlfe {
 	union {
 		struct rcu_head rcu;
 		atomic_t refcnt;
 	};
-	u8 no_instr;
-	u8 no_push;
-	u8 no_pop;
+	struct sockaddr *nh;
+	int ifindex;
+	u16 datalen;
 	u8 dead;
-	struct __instr data[0];
+	u8 num_push;
+	u8 num_pop;
+	u8 pad[3];
+	struct nlattr data[0];
 };
 
 struct ilm {
@@ -139,35 +137,17 @@ nhlfe_put(struct nhlfe *nhlfe)
 	}
 }
 
-void
-__nhlfe_free(struct nhlfe *nhlfe);
+struct net_device *__mpls_master_dev(struct net* net);
+void __nhlfe_free(struct nhlfe *nhlfe);
+struct nhlfe *__nhlfe_build(struct nlattr *instr);
+int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
+bool __nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs);
 
-struct nhlfe *
-__nhlfe_build(struct nlattr **instr);
+int ilm_init(void);
+void ilm_exit(void);
 
-int
-__nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
-
-bool
-nhlfe_instr_eq(const struct nhlfe *lhs, const struct nhlfe *rhs);
-
-bool
-__mpls_nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs);
-
-int
-ilm_init(void);
-
-void
-ilm_exit(void);
-
-struct net_device *
-__mpls_master_dev(struct net* net);
-
-int
-mpls_dev_init(void);
-
-void
-mpls_dev_exit(void);
+int mpls_dev_init(void);
+void mpls_dev_exit(void);
 
 #if IS_ENABLED(CONFIG_SYSCTL)
 extern int mpls_sysctl_net_id;
@@ -210,15 +190,14 @@ mpls_propagate_tc(struct net* net)
 
 #endif
 
-int
-mpls_recv(struct sk_buff *skb, struct net_device *dev,
+int mpls_recv(struct sk_buff *skb, struct net_device *dev,
 		struct packet_type *ptype, struct net_device *orig);
 
+#define mpls_get_master_dev(net) (mpls_ops ? mpls_ops->mpls_master_dev(net) : NULL)
 #define nhlfe_build(instr) (mpls_ops ? mpls_ops->nhlfe_build(instr) : ERR_PTR(-EPIPE))
 #define nhlfe_free(nhlfe) ({if (mpls_ops) mpls_ops->nhlfe_free(nhlfe); })
 #define nhlfe_dump(nhlfe, skb) (mpls_ops ? mpls_ops->nhlfe_dump(nhlfe, skb) : 0)
 #define mpls_policy (mpls_ops ? mpls_ops->nhlfe_policy : NULL)
-#define mpls_get_master_dev(net) (mpls_ops ? mpls_ops->mpls_master_dev(net) : NULL)
-#define mpls_nhlfe_eq(lhs, rhs) (mpls_ops ? mpls_ops->mpls_nhlfe_eq((lhs), (rhs)) : true)
+#define mpls_nhlfe_eq(lhs, rhs) (mpls_ops ? mpls_ops->nhlfe_eq((lhs), (rhs)) : true)
 
 #endif

@@ -39,23 +39,15 @@
 #include "mpls_cmd.h"
 
 static const struct {
-	struct nhlfe nhlfe;
-	struct __instr instr[2];
+	struct nhlfe	nhlfe;
+	struct nlattr	pop_hdr;
+	u8		pop_cnt;
 } pop_peek_nhlfe = {
-	.nhlfe = {
-		.no_instr = 2,
-		.no_push = 0,
-		.no_pop = 1,
-	},
-	.instr = {
-		{
-			.data = 1,
-			.cmd = MPLS_ATTR_POP,
-		}, {
-			.data = 0,
-			.cmd = MPLS_ATTR_PEEK,
-		},
-	},
+	.nhlfe.datalen = NLA_HDRLEN + sizeof(u8),
+	.nhlfe.num_pop = 1,
+	.pop_hdr.nla_len = NLA_HDRLEN + sizeof(u8),
+	.pop_hdr.nla_type = MPLSA_POP,
+	.pop_cnt = 1,
 };
 
 static const struct ilm ipv4_explicit_null = {
@@ -567,23 +559,16 @@ get_ilm_input(const struct net *net, u32 label, u8 tc)
 }
 
 static struct nla_policy ilm_policy[__MPLS_ATTR_MAX] __read_mostly = {
-	[MPLS_ATTR_POP]		= { .type = NLA_U8 },
-	[MPLS_ATTR_DSCP]	= { .type = NLA_U8 },
-	[MPLS_ATTR_TC_INDEX]	= { .type = NLA_U16 },
-	[MPLS_ATTR_SWAP]	= { .type = NLA_U32 },
-	[MPLS_ATTR_PUSH]	= { .type = NLA_NESTED },
-	[MPLS_ATTR_PEEK]	= { .type = NLA_FLAG },
-	[MPLS_ATTR_SEND_IPv4]	= { .len = sizeof(struct mpls_nh) },
-	[MPLS_ATTR_SEND_IPv6]	= { .len = sizeof(struct mpls_nh) },
-	[MPLS_ATTR_INSTR_COUNT]	= { .type = NLA_U8 },
+	[MPLSA_POP]		= { .type = NLA_U8 },
+	[MPLSA_DSCP]		= { .type = NLA_U8 },
+	[MPLSA_TC_INDEX]	= { .type = NLA_U16 },
+	[MPLSA_SWAP]		= { .type = NLA_U32 },
+	[MPLSA_PUSH]		= { .type = NLA_BINARY },
+	[MPLSA_NEXTHOP_OIF]	= { .type = NLA_U32 },
+	[MPLSA_NEXTHOP_ADDR]	= { .type = NLA_BINARY },
 };
 
-/* Utility functions for forwarding and receiving */
-static int
-mpls_finish_forward(struct sk_buff *skb, const struct nhlfe *nhlfe);
-
-static int
-mpls_push_pending_frames(struct sock *sk, struct flowi4 *fl4, void *extra)
+int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4, void *extra)
 {
 	struct sk_buff *skb;
 	struct iphdr *iph;
@@ -602,235 +587,72 @@ mpls_push_pending_frames(struct sock *sk, struct flowi4 *fl4, void *extra)
 
 	mpls_hdr(skb)->ttl = MPLSCB(skb)->hdr.ttl = iph->ttl;
 
-	skb->dev = skb_dst(skb)->dev;
-
-	return mpls_finish_forward(skb, payload->nhlfe);
+	return nhlfe_send(payload->nhlfe, skb);
 err:
 	return -ENOBUFS;
 }
 
-static bool
-__fragmentation_allowed(struct sk_buff *skb, const struct nhlfe *nhlfe)
+static inline void
+send_icmp_time_exceeded(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
-	struct mpls_hdr *hdr = mpls_hdr(skb);
-	struct iphdr *ip_hdr;
+	struct mpls_hdr_payload buf;
 
-	if (unlikely(skb->protocol != htons(ETH_P_MPLS_UC)))
-		goto err;
-
-	while (!hdr->s)
-		hdr++;
-
-	ip_hdr = (struct iphdr *)(++hdr);
-
-	if (ip_hdr->version == 4) {
-		if (ip_hdr->frag_off & htons(IP_DF)) {
-			struct mpls_hdr_payload buf;
-			if (unlikely(strip_mpls_headers(skb, &buf) != 0))
-				goto err;
-			buf.nhlfe = nhlfe;
-			__icmp_ext_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(dst_mtu(skb_dst(skb))),
-					buf.data_len, ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS, &buf,
-					mpls_push_pending_frames);
-			goto err;
-		}
-	}
-#if IS_ENABLED(CONFIG_IPV6)
-	else if (ip_hdr->version == 6) {
-		if (skb->len >= IPV6_MIN_MTU ||
-			!ipv6_has_fragment_hdr((struct ipv6hdr *)ip_hdr, skb)) {
-			/* TODO */
-			goto err;
-		}
-	}
-#endif
-
-	return true;
-err:
-	return false;
-}
-
-static inline int
-decrement_ttl(struct sk_buff *skb, const struct nhlfe *nhlfe)
-{
-	if (likely(skb->protocol == htons(ETH_P_MPLS_UC))) {
-		struct mpls_hdr *mplshdr = mpls_hdr(skb);
-		if (mplshdr->ttl <= 1) {
-			struct mpls_hdr_payload buf;
-			if (unlikely(strip_mpls_headers(skb, &buf) != 0))
-				goto err;
-			buf.nhlfe = nhlfe;
-			switch (skb->protocol) {
-			case htons(ETH_P_IP):
-				__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
-						buf.data_len, ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS, &buf,
-						mpls_push_pending_frames);
-				break;
-#if IS_ENABLED(CONFIG_IPV6)
-			case htons(ETH_P_IPV6):
-				/* TODO */
-				break;
-#endif
-			}
-			goto err;
-		}
-		MPLSCB(skb)->hdr.ttl = --mplshdr->ttl;
-	} else
-		goto discard;
-
-	return 0;
-err:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTERRORS);
-	return -MPLS_ERR;
-
-discard:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
-	return -MPLS_ERR;
-}
-
-
-/* Forwarding and receiving functions */
-
-static int
-mpls_finish_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
-{
-	const struct __instr *mi;
-	int ret;
-
-	mi = get_first_instruction(nhlfe);
-
-	if (mi->cmd == MPLS_ATTR_POP) {
-		ret = mpls_pop(skb, mi++);
-		if (unlikely(ret))
-			goto free_skb;
-	}
-
-	if (mi->cmd == MPLS_ATTR_DSCP) {
-		ret = mpls_dscp(skb, mi++);
-		if (unlikely(ret))
-			goto free_skb;
-	}
-
-	if (mi->cmd == MPLS_ATTR_TC_INDEX) {
-		ret = mpls_tc_index(skb, mi++);
-		if (unlikely(ret))
-			goto free_skb;
-	}
-
-	if (mi->cmd == MPLS_ATTR_SWAP) {
-		ret = mpls_swap(skb, mi++);
-		if (unlikely(ret))
-			goto free_skb;
-
-		if (mi->cmd != MPLS_ATTR_PUSH)
-			goto send;
-		else
-			goto push;
-	}
-
-	if (mi->cmd == MPLS_ATTR_PUSH) {
-push:
-		ret = mpls_push(skb, mi++);
-		if (unlikely(ret))
-			goto free_skb;
-		goto send;
-	}
-
-	if (mi->cmd == MPLS_ATTR_PEEK) {
-		ret = mpls_peek(skb, mi);
-		if (unlikely(ret))
-			goto free_skb;
-		else
-			goto end;
-	}
-
-send:
-	ret = mpls_send(skb, mi);
-	goto end;
-
-free_skb:
-	dev_kfree_skb(skb);
-end:
-	return ret;
-}
-
-static int
-mpls_forward(struct sk_buff *skb, const struct nhlfe *nhlfe)
-{
-	const struct __instr *mi;
-	struct dst_entry *dst = NULL;
-	int ret = -NET_XMIT_DROP;
-	int mpls_delta_headroom = (nhlfe->no_push - nhlfe->no_pop) * MPLS_HDR_LEN;
-	unsigned int mpls_headroom =
-			(mpls_delta_headroom > 0) ? mpls_delta_headroom : 0;
-
-	if (skb_cow_head(skb, mpls_headroom) < 0)
-		goto out_discard;
-
-	mi = get_last_instruction(nhlfe);
-	switch (mi->cmd) {
-	case MPLS_ATTR_SEND_IPv4:
-		dst = mpls_get_dst_ipv4(skb, mi);
+	if (unlikely(strip_mpls_headers(skb, &buf) != 0))
+		return;
+	buf.nhlfe = nhlfe;
+	switch (skb->protocol) {
+	case htons(ETH_P_IP):
+		__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
+				buf.data_len,
+				ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
+				&buf, mpls_send_mpls_ipv4);
 		break;
 #if IS_ENABLED(CONFIG_IPV6)
-	case MPLS_ATTR_SEND_IPv6:
-		dst = mpls_get_dst_ipv6(skb, mi);
+	case htons(ETH_P_IPV6):
+		/* TODO */
 		break;
 #endif
-	case MPLS_ATTR_PEEK:
-		goto send;
 	}
-	if (!dst)
-		goto free_skb;
-
-	__mpls_set_dst(skb, dst);
-
-	if (unlikely((skb->len + mpls_delta_headroom > skb_dst(skb)->dev->mtu) &&
-			!__fragmentation_allowed(skb, nhlfe)))
-		goto free_skb;
-
-	ret = decrement_ttl(skb, nhlfe);
-	if (unlikely(ret))
-		goto free_skb;
-
-send:
-	mpls_finish_forward(skb, nhlfe);
-	goto end;
-
-out_discard:
-	ret = -NET_XMIT_DROP;
-	MPLS_INC_STATS(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
-free_skb:
-	dev_kfree_skb(skb);
-end:
-	return ret;
 }
 
 static inline int
 mpls_input(struct sk_buff *skb, struct net_device *dev, u32 label, u8 tc)
 {
 	const struct ilm *ilm;
-	int ret = NET_RX_DROP;
+	const struct nhlfe *nhlfe;
+	int ret;
 
 	rcu_read_lock();
 	ilm = get_ilm_input(dev_net(skb->dev), label, tc);
-	if (unlikely(!(ilm && ilm->nhlfe))) {
-		rcu_read_unlock();
-		MPLS_INC_STATS_BH(dev_net(dev),
-			MPLS_MIB_IFINLABELLOOKUPFAILURES);
-		goto mpls_input_drop;
-	}
+	if (unlikely(ilm == NULL))
+		goto err;
+	nhlfe = rcu_dereference(ilm->nhlfe);
+	if (unlikely(nhlfe == NULL))
+		goto err;
 
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
 	MPLS_ADD_STATS_BH(dev_net(dev), MPLS_MIB_INOCTETS, skb->len);
 
-	ret = mpls_forward(skb, ilm->nhlfe);
+	if (nhlfe->nh == NULL) {
+		if (MPLSCB(skb)->hdr.ttl <= 1) {
+			send_icmp_time_exceeded(skb, nhlfe);
+			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_OUTDISCARDS);
+			goto free_skb;
+		}
+		/* FIXME: make sure decremented ttl is flushed out to skb */
+		MPLSCB(skb)->hdr.ttl--;
+	}
+	ret = (nhlfe_send(nhlfe, skb) == NET_XMIT_SUCCESS) ? NET_RX_SUCCESS : NET_RX_DROP;
 	rcu_read_unlock();
+
 	return ret;
 
-mpls_input_drop:
+err:
+	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_IFINLABELLOOKUPFAILURES);
+free_skb:
+	rcu_read_unlock();
 	kfree_skb(skb);
-	return ret;
+	return NET_RX_DROP;
 }
 
 /* Main receiving function */
@@ -956,7 +778,6 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 {
 	struct rtmsg *rtm;
 	struct nlattr *rta[RTA_MAX + 1];
-	struct nlattr *mpls[__MPLS_ATTR_MAX + 1];
 	struct ilm *ilm = NULL;
 	struct net *net = sock_net(skb->sk);
 	struct nhlfe *nhlfe;
@@ -984,11 +805,11 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 	if (!rta[RTA_MPLS])
 		return -EINVAL;
 
-	err = nla_parse_nested(mpls, __MPLS_ATTR_MAX, rta[RTA_MPLS], ilm_policy);
+	err = nla_validate_nested(rta[RTA_MPLS], __MPLS_ATTR_MAX, ilm_policy);
 	if (err < 0)
 		return err;
 
-	nhlfe = __nhlfe_build(mpls);
+	nhlfe = __nhlfe_build(rta[RTA_MPLS]);
 	if (IS_ERR(nhlfe))
 		return PTR_ERR(nhlfe);
 

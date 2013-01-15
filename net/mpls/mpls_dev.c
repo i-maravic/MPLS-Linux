@@ -55,194 +55,62 @@ struct pcpu_tstats {
 	unsigned long	tx_bytes;
 } __attribute__((aligned(4*sizeof(unsigned long))));
 
-static int
-__mpls_finish_xmit(struct sk_buff *skb, const void *data)
-{
-	u32 packet_length = 0;
-	struct net_device *tdev = skb->dev;
-	struct dst_entry *dst = skb_dst(skb);
-	const struct nhlfe *nhlfe = data;
-	const struct __instr *mi;
-	struct pcpu_tstats *tstats = this_cpu_ptr(tdev->tstats);
-	int ret = -NET_RX_DROP;
-
-	mi = get_first_instruction(nhlfe);
-
-	if (mi->cmd == MPLS_ATTR_DSCP) {
-		ret = mpls_dscp(skb, mi++);
-		if (unlikely(ret))
-			goto abort;
-	}
-
-	if (mi->cmd == MPLS_ATTR_TC_INDEX) {
-		ret = mpls_tc_index(skb, mi++);
-		if (unlikely(ret))
-			goto abort;
-	}
-
-	if (mi->cmd == MPLS_ATTR_PUSH) {
-		ret = mpls_push(skb, mi);
-		if (unlikely(ret))
-			goto abort;
-	}
-
-	packet_length = skb->len;
-
-	if (unlikely(skb->len > dst->dev->mtu))
-		goto abort;
-
-	ret = mpls_send(skb, NULL);
-	if (likely(!ret)) {
-		tstats->tx_packets++;
-		tstats->tx_bytes += packet_length;
-	} else {
-		tdev->stats.tx_dropped++;
-	}
-	return ret;
-
-abort:
-	tdev->stats.tx_aborted_errors++;
-	tdev->stats.tx_errors++;
-	dev_kfree_skb(skb);
-	return -NET_XMIT_DROP;
-}
-
 static netdev_tx_t
 mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 {
 	struct mpls_tunnel *tunnel = netdev_priv(tdev);
 	const struct mpls_dev_net *mdn = net_generic(dev_net(tdev), mpls_dev_net_id);
 	const struct nhlfe *nhlfe = NULL;
-	struct dst_entry *dst = NULL, *tdst = skb_dst(skb);
-	const struct __instr *mi;
-	u32 mtu, hlen;
-	int ret = -NET_XMIT_DROP;
+	struct pcpu_tstats *tstats = this_cpu_ptr(tdev->tstats);
+	struct dst_entry *tdst = skb_dst(skb);
+	int ret;
 
 	rcu_read_lock();
 	if (tdev == mdn->master_dev) {
-		if (unlikely(!tdst || !tdst->nhlfe))
-			goto discard;
+		if (unlikely(tdst == NULL))
+			goto unlock_and_free;
 
 		nhlfe = rcu_dereference(tdst->nhlfe);
+		if (unlikely(nhlfe == NULL))
+			goto unlock_and_free;
 
 		if (unlikely(nhlfe->dead)) {
 			tdst->obsolete = DST_OBSOLETE_KILL;
-			goto drop;
+			goto unlock_and_free;
 		}
-
-		hlen = nhlfe->no_push * MPLS_HDR_LEN;
 	} else {
 		nhlfe = rcu_dereference(tunnel->nhlfe);
-
-		hlen = tunnel->hlen;
 	}
+	ret = nhlfe_send(nhlfe, skb);
+	rcu_read_unlock();
 
-	if (unlikely(skb_cow_head(skb, hlen) < 0))
-		goto discard;
-
-	mi = get_last_instruction(nhlfe);
-	switch (mi->cmd) {
-	case MPLS_ATTR_SEND_IPv4:
-		dst = mpls_get_dst_ipv4(skb, mi);
-		break;
-#if IS_ENABLED(CONFIG_IPV6)
-	case MPLS_ATTR_SEND_IPv6:
-		dst = mpls_get_dst_ipv6(skb, mi);
-		break;
-#endif
+	switch (ret) {
+	case NET_XMIT_SUCCESS:
+		tstats->tx_packets++;
+		tstats->tx_bytes += skb->len;
+		return NET_XMIT_SUCCESS;
+	case -ELOOP:
+		tdev->stats.collisions++;
+		tdev->stats.tx_dropped++;
+		return NET_XMIT_DROP;
+	case -ENETUNREACH:
+		tdev->stats.tx_carrier_errors++;
+		dst_link_failure(skb);
+		goto err;
+	case -EPFNOSUPPORT:
 	default:
 		goto discard;
 	}
 
-	if (!dst)
-		goto link_failure;
-
-	if (unlikely(dst->dev == tdev)) {
-		tdev->stats.collisions++;
-		goto drop;
-	}
-
-	mtu = dst->dev->mtu - tdev->hard_header_len - hlen;
-
-	if (likely(tdst))
-		tdst->ops->update_pmtu(tdst, NULL, skb, mtu);
-
-	if (skb->protocol == htons(ETH_P_IP)) {
-		struct iphdr *iph = ip_hdr(skb);
-
-		if (mtu < ntohs(iph->tot_len)) {
-			if (iph->frag_off & htons(IP_DF)) {
-				icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu));
-				goto err;
-			} else {
-				/* Avoid icmp_send in ip_fragment */
-				skb->local_df = 1;
-				__mpls_set_dst(skb, dst);
-				ret = mpls_update_pmtu(skb, mi, mtu);
-				if (unlikely(ret)) {
-					dst = NULL;
-					goto err;
-				}
-
-				__ip_fragment(skb, nhlfe, __mpls_finish_xmit);
-				goto exit;
-			}
-		}
-	}
-#if IS_ENABLED(CONFIG_IPV6)
-	else if (skb->protocol == htons(ETH_P_IPV6)) {
-		if (mtu < skb->len - tunnel->hlen) {
-			if (mtu >= IPV6_MIN_MTU ||
-				  !ipv6_has_fragment_hdr(ipv6_hdr(skb), skb)) {
-				icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
-				goto err;
-			} else {
-				/* Avoid icmp_send in ip6_fragment */
-				skb->local_df = 1;
-				__mpls_set_dst(skb, dst);
-				ret = mpls_update_pmtu(skb, mi, mtu);
-				if (unlikely(ret)) {
-					dst = NULL;
-					goto err;
-				}
-
-				__ip6_fragment(skb, nhlfe, __mpls_finish_xmit);
-				goto exit;
-			}
-		}
-	}
-#endif
-	else
-		goto discard;
-
-	__mpls_set_dst(skb, dst);
-	__mpls_finish_xmit(skb, nhlfe);
-	goto exit;
-
+unlock_and_free:
+	rcu_read_unlock();
+	dev_kfree_skb(skb);
 discard:
 	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
 	tdev->stats.tx_aborted_errors++;
-	goto err;
-
-link_failure:
-	tdev->stats.tx_carrier_errors++;
-	dst_link_failure(skb);
-
 err:
 	tdev->stats.tx_errors++;
-	dst_release(dst);
-	goto free_skb;
-
-drop:
-	tdev->stats.tx_dropped++;
-	dst_release(dst);
-
-free_skb:
-	dev_kfree_skb(skb);
-
-exit:
-	rcu_read_unlock();
-	return NETDEV_TX_OK;
+	return NET_XMIT_DROP;
 }
 
 static void mpls_dev_free(struct net_device *dev)
@@ -364,9 +232,7 @@ static int mpls_tunnel_validate(struct nlattr *tb[], struct nlattr *data[])
 	if (!data)
 		return 0;
 
-	if (data[MPLS_ATTR_POP] ||
-	    data[MPLS_ATTR_SWAP] ||
-	    data[MPLS_ATTR_PEEK])
+	if (data[MPLSA_POP] || data[MPLSA_SWAP] || !data[MPLSA_NEXTHOP_ADDR])
 		return -EINVAL;
 
 	return 0;
@@ -375,11 +241,10 @@ static int mpls_tunnel_validate(struct nlattr *tb[], struct nlattr *data[])
 static int
 mpls_tunnel_bind_dev(struct net_device *dev)
 {
-	struct mpls_tunnel *tunnel;
 	const struct nhlfe *nhlfe;
-	const struct __instr *last_instr;
-	const struct __mpls_nh *nh = NULL;
+	struct mpls_tunnel *tunnel;
 	struct net_device *tdev = NULL;
+	struct dst_entry *dst;
 	int hlen = LL_MAX_HEADER;
 	int mtu = ETH_DATA_LEN;
 	int addend = 0;
@@ -387,39 +252,13 @@ mpls_tunnel_bind_dev(struct net_device *dev)
 
 	tunnel = netdev_priv(dev);
 	nhlfe = rcu_dereference_rtnl(tunnel->nhlfe);
-	addend = nhlfe->no_push * MPLS_HDR_LEN;
-	last_instr = get_last_instruction(nhlfe);
-	nh = (struct __mpls_nh *)rtnl_dereference_ulong(last_instr->data);
+	addend = nhlfe->num_push * MPLS_HDR_LEN;
 
-	if (nh) {
-		link = nh->iface;
-		if (last_instr->cmd == MPLS_ATTR_SEND_IPv4) {
-			struct rtable *rt;
-
-			rt = ip_route_output(dev_net(dev),
-					nh->ipv4.sin_addr.s_addr, 0, 0, nh->iface);
-
-			if (!IS_ERR(rt)) {
-				tdev = rt->dst.dev;
-				ip_rt_put(rt);
-			}
-		}
-#if IS_ENABLED(CONFIG_IPV6)
-		else if (last_instr->cmd == MPLS_ATTR_SEND_IPv6) {
-			struct dst_entry *dst;
-			struct flowi6 fl6;
-
-			memset(&fl6, 0, sizeof(fl6));
-			fl6.flowi6_oif = nh->iface;
-			fl6.daddr = nh->ipv6.sin6_addr;
-
-			dst = ip6_route_output(dev_net(dev), NULL, &fl6);
-			if (!(!dst || dst->error))
-				tdev = dst->dev;
-
-			dst_release(dst);
-		}
-#endif
+	link = nhlfe->ifindex;
+	dst = nhlfe_get_nexthop_dst(nhlfe, dev_net(dev), NULL);
+	if (!IS_ERR(dst)) {
+		tdev = dst->dev;
+		dst_release(dst);
 	}
 
 	if (!tdev && link)
@@ -443,7 +282,7 @@ mpls_tunnel_bind_dev(struct net_device *dev)
 
 static int
 mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
-						struct nlattr *data[])
+		   struct nlattr *data[])
 {
 	struct mpls_tunnel *nt;
 	struct mpls_dev_net *mdn = net_generic(dev_net(dev), mpls_dev_net_id);
@@ -453,7 +292,7 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 	if (dev == mdn->master_dev)
 		return -EINVAL;
 
-	nhlfe = __nhlfe_build(data);
+	nhlfe = __nhlfe_build(tb[IFLA_INFO_DATA]);
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 
@@ -481,7 +320,7 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 	int mtu;
 	int err;
 
-	nhlfe = __nhlfe_build(data);
+	nhlfe = __nhlfe_build(tb[IFLA_INFO_DATA]);
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 
@@ -527,25 +366,19 @@ mpls_tunnel_setup(struct net_device *dev)
 static size_t
 mpls_get_size(const struct net_device *dev)
 {
-	return
-		/* MPLS_ATTR_POP */
-		nla_total_size(1) +
-		/* MPLS_ATTR_DSCP */
-		nla_total_size(1) +
-		/* MPLS_ATTR_TC_INDEX */
-		nla_total_size(2) +
-		/* MPLS_ATTR_SWAP */
-		nla_total_size(4) +
-		/* MPLS_ATTR_PUSH */
-		nla_total_size(sizeof(struct nlattr)) +
-		(MPLS_PUSH_MAX - 1) * nla_total_size(4) +
-		/* MPLS_NO_PUSHES */
-		nla_total_size(1) +
-		/* MPLS_ATTR_PEEK || MPLS_ATTR_SEND_IPv4 || MPLS_ATTR_SEND_IPv6 */
-		nla_total_size(sizeof(struct mpls_nh)) +
-		/* MPLS_ATTR_INSTR_COUNT */
-		nla_total_size(1) +
-		0;
+	return	nla_total_size(1) +		/* MPLSA_POP */
+		nla_total_size(1) +		/* MPLSA_DSCP */
+		nla_total_size(2) +		/* MPLSA_TC_INDEX */
+		nla_total_size(MPLS_HDR_LEN) +	/* MPLSA_SWAP */
+		10*nla_total_size(MPLS_HDR_LEN) +	/* MPLSA_PUSH */
+		nla_total_size(4) +		/* MPLSA_NEXTHOP_OIF */
+		/* MPLSA_NEXTHOP_ADDR */
+#if IS_ENABLED(CONFIG_IPV6)
+		nla_total_size(sizeof(struct sockaddr_in6))
+#else
+		nla_total_size(sizeof(struct sockaddr_in))
+#endif
+		;
 }
 
 static int
