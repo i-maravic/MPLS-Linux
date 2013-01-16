@@ -42,6 +42,8 @@ static int validate_nla(const struct nlattr *nla, int maxtype,
 	BUG_ON(pt->type > NLA_TYPE_MAX);
 
 	switch (pt->type) {
+	case NLA_PROHIBIT:
+		return -EINVAL;
 	case NLA_FLAG:
 		if (attrlen > 0)
 			return -ERANGE;
