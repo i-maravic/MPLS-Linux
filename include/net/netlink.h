@@ -172,6 +172,7 @@ enum {
 	NLA_S16,
 	NLA_S32,
 	NLA_S64,
+	NLA_PROHIBIT,
 	__NLA_TYPE_MAX,
 };
 
@@ -200,6 +201,7 @@ enum {
  *    NLA_MSECS            Leaving the length field zero will verify the
  *                         given type fits, using it verifies minimum length
  *                         just like "All other"
+ *    NLA_PROHIBIT         Unused
  *    All other            Minimum length of attribute payload
  *
  * Example:
