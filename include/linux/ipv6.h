@@ -76,7 +76,7 @@ static inline __u8 ipv6_tclass(const struct ipv6hdr *iph)
 	return (ntohl(*(__be32 *)iph) >> 20) & 0xff;
 }
 
-/* 
+/*
    This structure contains results of exthdrs parsing
    as offsets from skb->nh.
  */
@@ -99,6 +99,7 @@ struct inet6_skb_parm {
 #define IP6SKB_XFRM_TRANSFORMED	1
 #define IP6SKB_FORWARDED	2
 #define IP6SKB_REROUTED		4
+#define IP6SKB_MPLS_TUNNEL	8
 };
 
 #define IP6CB(skb)	((struct inet6_skb_parm*)((skb)->cb))

@@ -63,6 +63,7 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 	const struct nhlfe *nhlfe = NULL;
 	struct pcpu_tstats *tstats = this_cpu_ptr(tdev->tstats);
 	struct dst_entry *tdst = skb_dst(skb);
+	struct net *net = dev_net(skb->dev);
 	int ret;
 
 	rcu_read_lock();
@@ -78,9 +79,10 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 			tdst->obsolete = DST_OBSOLETE_KILL;
 			goto unlock_and_free;
 		}
-	} else {
+	} else
 		nhlfe = rcu_dereference(tunnel->nhlfe);
-	}
+
+	skb->dev = tdev;
 	ret = nhlfe_send(nhlfe, skb);
 	rcu_read_unlock();
 
@@ -95,7 +97,6 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 		return NET_XMIT_DROP;
 	case -ENETUNREACH:
 		tdev->stats.tx_carrier_errors++;
-		dst_link_failure(skb);
 		goto err;
 	case -EPFNOSUPPORT:
 	default:
@@ -106,7 +107,7 @@ unlock_and_free:
 	rcu_read_unlock();
 	dev_kfree_skb(skb);
 discard:
-	MPLS_INC_STATS_BH(dev_net(skb->dev), MPLS_MIB_OUTDISCARDS);
+	MPLS_INC_STATS_BH(net, MPLS_MIB_OUTDISCARDS);
 	tdev->stats.tx_aborted_errors++;
 err:
 	tdev->stats.tx_errors++;
@@ -122,7 +123,7 @@ static void mpls_dev_free(struct net_device *dev)
 		mdn->master_dev = NULL;
 
 	rtnl_lock();
-	__nhlfe_free(t->nhlfe);
+	__nhlfe_free_rcu(t->nhlfe);
 	rtnl_unlock();
 
 	free_percpu(dev->tstats);
@@ -229,10 +230,7 @@ static struct pernet_operations mpls_dev_net_ops = {
 
 static int mpls_tunnel_validate(struct nlattr *tb[], struct nlattr *data[])
 {
-	if (!data)
-		return 0;
-
-	if (data[MPLSA_POP] || data[MPLSA_SWAP] || !data[MPLSA_NEXTHOP_ADDR])
+	if (!data || !data[MPLSA_NEXTHOP_ADDR])
 		return -EINVAL;
 
 	return 0;
@@ -256,7 +254,7 @@ mpls_tunnel_bind_dev(struct net_device *dev)
 	addend = nhlfe->num_push * MPLS_HDR_LEN;
 
 	link = nhlfe->ifindex;
-	net = nhlfe->global ? &init_net : dev_net(dev);
+	net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(dev);
 	dst = nhlfe_get_nexthop_dst(nhlfe, net, NULL);
 	if (!IS_ERR(dst)) {
 		tdev = dst->dev;
@@ -294,14 +292,14 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 	if (dev == mdn->master_dev)
 		return -EINVAL;
 
-	nhlfe = __nhlfe_build(dev_net(dev), tb[IFLA_INFO_DATA]);
+	nhlfe = __nhlfe_build(dev_net(dev), NULL, NULL, data);
 
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);
 
 	nt = netdev_priv(dev);
 	old_nhlfe = rtnl_dereference(nt->nhlfe);
-	__nhlfe_free(old_nhlfe);
+	__nhlfe_free_rcu(old_nhlfe);
 
 	rcu_assign_pointer(nt->nhlfe, nhlfe);
 
@@ -323,7 +321,7 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 	int mtu;
 	int err;
 
-	nhlfe = __nhlfe_build(src_net, tb[IFLA_INFO_DATA]);
+	nhlfe = __nhlfe_build(src_net, NULL, NULL, data);
 
 	if (unlikely(IS_ERR(nhlfe)))
 		return PTR_ERR(nhlfe);

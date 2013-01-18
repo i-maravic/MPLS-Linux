@@ -80,6 +80,10 @@
 #include <linux/netlink.h>
 #include <linux/tcp.h>
 
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
+
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 EXPORT_SYMBOL(sysctl_ip_default_ttl);
 
@@ -487,6 +491,10 @@ int __ip_fragment(struct sk_buff *skb, const void *data,
 #ifdef CONFIG_BRIDGE_NETFILTER
 	if (skb->nf_bridge)
 		mtu -= nf_bridge_mtu_reduction(skb);
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+	if (data && (IPCB(skb)->flags & IPSKB_MPLS_TUNNEL))
+		mtu -= MPLSCB(skb)->mpls_hdr_len;
 #endif
 	IPCB(skb)->flags |= IPSKB_FRAG_COMPLETE;
 

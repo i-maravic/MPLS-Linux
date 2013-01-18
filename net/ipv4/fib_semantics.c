@@ -233,8 +233,7 @@ void free_fib_info(struct fib_info *fi)
 			fi->fib_net->ipv4.fib_num_tclassid_users--;
 #endif
 #if IS_ENABLED(CONFIG_MPLS)
-		if (nexthop_nh->nhlfe)
-			nhlfe_free(nexthop_nh->nhlfe);
+		nhlfe_free_rcu(nexthop_nh->nhlfe);
 #endif
 	} endfor_nexthops(fi);
 #endif
@@ -507,7 +506,6 @@ static int fib_get_nhs(struct fib_info *fi, struct rtnexthop *rtnh,
 #if IS_ENABLED(CONFIG_MPLS)
 			nla = nla_find(attrs, attrlen, RTA_MPLS);
 			if (nla) {
-				struct nlattr *tb[MPLS_ATTR_MAX + 1];
 				struct net_device *mpls_dev = mpls_get_master_dev(fi->fib_net);
 				struct nhlfe *nhlfe;
 
@@ -516,13 +514,7 @@ static int fib_get_nhs(struct fib_info *fi, struct rtnexthop *rtnh,
 					nexthop_nh->nh_gw != 0))
 					return -EINVAL;
 
-				if (nla_parse_nested(tb, MPLS_ATTR_MAX, nla, mpls_policy))
-					return -EINVAL;
-
-				if (tb[MPLSA_POP] || tb[MPLSA_SWAP] || !tb[MPLSA_NEXTHOP_ADDR])
-					return -EINVAL;
-
-				nhlfe = nhlfe_build(fi->fib_net, nla);
+				nhlfe = nhlfe_build(fi->fib_net, nla, mpls_policy);
 
 				if (IS_ERR(nhlfe))
 					return PTR_ERR(nhlfe);
@@ -555,14 +547,10 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 		if (!fi->fib_nh->nhlfe || fi->fib_nh->nh_gw || cfg->fc_gw)
 			return 1;
 		else {
-			struct nlattr *tb[MPLS_ATTR_MAX + 1];
 			struct nhlfe *nhlfe;
 			bool ret;
 
-			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy))
-				return 1;
-
-			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe);
+			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe, mpls_policy);
 			if (IS_ERR(nhlfe))
 				return 1;
 
@@ -616,14 +604,10 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 				if (!nh->nhlfe || nh->nh_gw)
 					return 1;
 				else {
-					struct nlattr *tb[MPLS_ATTR_MAX + 1];
 					struct nhlfe *nhlfe;
 					bool ret;
 
-					if (nla_parse_nested(tb, MPLS_ATTR_MAX, nla, mpls_policy))
-						return 1;
-
-					nhlfe = nhlfe_build(fi->fib_net, nla);
+					nhlfe = nhlfe_build(fi->fib_net, nla, mpls_policy);
 
 					if (IS_ERR(nhlfe))
 						return 1;
@@ -980,7 +964,6 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 		nh->nh_flags = cfg->fc_flags;
 #if IS_ENABLED(CONFIG_MPLS)
 		if (cfg->fc_nhlfe) {
-			struct nlattr *tb[MPLS_ATTR_MAX + 1];
 			struct net_device *mpls_dev = mpls_get_master_dev(net);
 			struct nhlfe *nhlfe;
 
@@ -989,13 +972,7 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 				nh->nh_gw != 0))
 				goto err_inval;
 
-			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy))
-				goto err_inval;
-
-			if (tb[MPLSA_POP] || tb[MPLSA_SWAP] || !tb[MPLSA_NEXTHOP_ADDR])
-				goto err_inval;
-
-			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe);
+			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe, mpls_policy);
 
 			if (IS_ERR(nhlfe)) {
 				err = PTR_ERR(nhlfe);

@@ -283,15 +283,18 @@ static struct packet_type mpls_uc_packet_type = {
 static struct mpls_ops __mpls_ops = {
 	.mpls_master_dev = __mpls_master_dev,
 	.nhlfe_build	= __nhlfe_build,
+	.nhlfe_free_rcu	= __nhlfe_free_rcu,
 	.nhlfe_free	= __nhlfe_free,
 	.nhlfe_dump	= __nhlfe_dump,
-	.nhlfe_eq	= __nhlfe_eq,
 	.nhlfe_policy	= __nhlfe_policy
 };
 
 static int __init mpls_init_module(void)
 {
 	int err;
+
+	/* Assert if struct mpls_skb_cb is of correct size */
+	BUILD_BUG_ON(sizeof(struct mpls_skb_cb) > sizeof(((struct sk_buff *)0)->cb));
 
 	printk(KERN_INFO "MPLS: version %d.%d%d%d\n",
 			(MPLS_LINUX_VERSION >> 24) & 0xFF,

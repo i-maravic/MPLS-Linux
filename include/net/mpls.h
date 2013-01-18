@@ -36,6 +36,10 @@
 #include <net/netns/generic.h>
 #include <linux/module.h>
 #include <linux/rtnetlink.h>
+#include <net/ip.h>
+#if IS_ENABLED(CONFIG_IPV6)
+#include <linux/ipv6.h>
+#endif
 
 /*
  * Forward declarations
@@ -44,12 +48,12 @@ extern int sysctl_mpls_default_ttl;
 
 struct mpls_ops {
 	struct net_device *	(*mpls_master_dev) (const struct net* net);
-	struct nhlfe *		(*nhlfe_build) (const struct net* net, struct nlattr *mpls);
+	struct nhlfe *		(*nhlfe_build) (const struct net* net, struct nlattr *mpls,
+						const struct nla_policy *policy, struct nlattr *data[]);
+	void			(*nhlfe_free_rcu) (struct nhlfe *nhlfe);
 	void			(*nhlfe_free) (struct nhlfe *nhlfe);
 	int 			(*nhlfe_dump) (const struct nhlfe *nhlfe,
 						struct sk_buff *skb);
-	bool			(*nhlfe_eq) (struct nhlfe *lhs,
-					     struct nhlfe *rhs);
 	struct nla_policy *	nhlfe_policy;
 };
 
@@ -76,8 +80,15 @@ static inline struct mpls_hdr *mpls_hdr(const struct sk_buff *skb)
 }
 
 struct mpls_skb_cb {
+	union {
+		struct inet_skb_parm ___pad1;
+#if IS_ENABLED(CONFIG_IPV6)
+		struct inet6_skb_parm ___pad2;
+#endif
+	};
 	struct mpls_hdr hdr;
 	__be32 daddr[4];
+	int mpls_hdr_len;
 };
 
 #define MPLSCB(skb) ((struct mpls_skb_cb *)((skb)->cb))
@@ -94,24 +105,60 @@ struct mpls_tunnel {
 };
 
 struct nhlfe {
+	/*
+	 * NHLFE accounting data,
+	 * that isn't used in comparisons
+	 */
 	union {
 		struct rcu_head rcu;
-		atomic_t refcnt;
+		struct hlist_node portal; /* For netns accounting */
 	};
-	struct sockaddr *nh;
-	int ifindex;
-	u16 datalen;
+	atomic_t refcnt;
 	u8 dead;
-	u8 num_push;
+	/* NHLFE data */
+#define NHLFE_CMPR_START(nhlfe) ((char *)(&(nhlfe)->flags))
+	u8 flags;
+#define MPLS_HAS_NH		0x01
+#define MPLS_NH_GLOBAL		0x02
+#define MPLS_SET_DSCP		0x04
+#define MPLS_SET_TC_INDEX	0x08
 	u8 num_pop;
-	u8 pad[1];
-	u8 global;
-	u8 tc;
-	u32 label;
+	u8 dscp;
+	/* nexthop info */
+	u16 family;
+	u32 ifindex;
+	union {
+		struct in_addr ipv4;
+		struct in6_addr ipv6;
+	} nh;
+	/* net info */
+	struct {
+		u32 label;
+		u8 tc;
+		u8 __pad[3];
+	} net_key;
 	struct net *net;
-	struct hlist_node portal;
-	struct nlattr data[0];
+	u16 tc_index;
+	/*
+	 * Keep these two here,
+	 * so they would be closer to the
+	 * actual headers that are going to be pushed
+	 */
+	u8 num_push;
+	u8 has_swap;
+	struct mpls_hdr data[0];
 };
+
+#define NHLFE_ALIGN sizeof(long long)
+
+#define NHLFE_CMPR_OFFSET(nhlfe)							\
+	(NHLFE_CMPR_START(nhlfe) - (char *)(nhlfe))
+
+#define NHLFE_SIZE(num_push, swap)							\
+	(sizeof(struct nhlfe) + (((num_push) + (swap)) * MPLS_HDR_LEN))
+
+#define NHLFE_CMPR_LEN(nhlfe)								\
+	(NHLFE_SIZE((nhlfe)->num_push, (nhlfe)->has_swap) - NHLFE_CMPR_OFFSET(nhlfe))
 
 struct ilm {
 	struct rcu_head rcu;
@@ -180,11 +227,24 @@ nhlfe_put(struct nhlfe *nhlfe)
 	}
 }
 
+static inline bool
+mpls_nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs)
+{
+	if (rhs == lhs)
+		return true;
+	if (rhs == NULL || lhs == NULL)
+		return false;
+	if (rhs->num_push != lhs->num_push || rhs->has_swap != lhs->has_swap)
+		return false;
+	return memcmp(NHLFE_CMPR_START(lhs), NHLFE_CMPR_START(rhs), NHLFE_CMPR_LEN(lhs)) == 0;
+}
+
 struct net_device *__mpls_master_dev(const struct net* net);
+void __nhlfe_free_rcu(struct nhlfe *nhlfe);
 void __nhlfe_free(struct nhlfe *nhlfe);
-struct nhlfe *__nhlfe_build(const struct net *net, struct nlattr *instr);
+struct nhlfe *__nhlfe_build(const struct net *net, struct nlattr *instr,
+				const struct nla_policy *policy, struct nlattr *data[]);
 int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb);
-bool __nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs);
 
 int ilm_init(void);
 void ilm_exit(void);
@@ -237,10 +297,10 @@ int mpls_recv(struct sk_buff *skb, struct net_device *dev,
 		struct packet_type *ptype, struct net_device *orig);
 
 #define mpls_get_master_dev(net) (mpls_ops ? mpls_ops->mpls_master_dev(net) : NULL)
-#define nhlfe_build(net, instr) (mpls_ops ? mpls_ops->nhlfe_build(net, instr) : ERR_PTR(-EPIPE))
+#define nhlfe_build(net, instr, policy) (mpls_ops ? mpls_ops->nhlfe_build(net, instr, policy, NULL) : ERR_PTR(-EPIPE))
+#define nhlfe_free_rcu(nhlfe) ({if (mpls_ops) mpls_ops->nhlfe_free_rcu(nhlfe); })
 #define nhlfe_free(nhlfe) ({if (mpls_ops) mpls_ops->nhlfe_free(nhlfe); })
 #define nhlfe_dump(nhlfe, skb) (mpls_ops ? mpls_ops->nhlfe_dump(nhlfe, skb) : 0)
 #define mpls_policy (mpls_ops ? mpls_ops->nhlfe_policy : NULL)
-#define mpls_nhlfe_eq(lhs, rhs) (mpls_ops ? mpls_ops->nhlfe_eq((lhs), (rhs)) : true)
 
 #endif

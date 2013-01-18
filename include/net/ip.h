@@ -42,6 +42,7 @@ struct inet_skb_parm {
 #define IPSKB_XFRM_TRANSFORMED	4
 #define IPSKB_FRAG_COMPLETE	8
 #define IPSKB_REROUTED		16
+#define IPSKB_MPLS_TUNNEL	32
 
 	u16			frag_max_size;
 };

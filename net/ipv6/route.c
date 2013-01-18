@@ -1506,7 +1506,6 @@ int ip6_route_add(struct fib6_config *cfg)
 			err = -EINVAL;
 			goto out;
 		} else {
-			struct nlattr *tb[MPLS_ATTR_MAX + 1];
 			struct net_device *mpls_dev = mpls_get_master_dev(net);
 
 			if (unlikely(!mpls_dev || !dev ||
@@ -1515,17 +1514,7 @@ int ip6_route_add(struct fib6_config *cfg)
 				goto out;
 			}
 
-			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy)) {
-				err = -EINVAL;
-				goto out;
-			}
-
-			if (tb[MPLSA_POP] || tb[MPLSA_SWAP] || !tb[MPLSA_NEXTHOP_ADDR]) {
-				err = -EINVAL;
-				goto out;
-			}
-
-			nhlfe = nhlfe_build(net, cfg->fc_nhlfe);
+			nhlfe = nhlfe_build(net, cfg->fc_nhlfe, mpls_policy);
 			if (IS_ERR(nhlfe)) {
 				err = PTR_ERR(nhlfe);
 				goto out;
@@ -1643,8 +1632,7 @@ out:
 	if (rt)
 		dst_free(&rt->dst);
 #if IS_ENABLED(CONFIG_MPLS)
-	if (nhlfe)
-		nhlfe_free(nhlfe);
+	nhlfe_free(nhlfe);
 #endif
 	return err;
 }
@@ -1697,11 +1685,7 @@ static int ip6_route_del(struct fib6_config *cfg)
 		if (cfg->fc_flags & RTF_GATEWAY)
 			return -EINVAL;
 		else {
-			struct nlattr *tb[MPLS_ATTR_MAX + 1];
-			if (nla_parse_nested(tb, MPLS_ATTR_MAX, cfg->fc_nhlfe, mpls_policy))
-				return -EINVAL;
-
-			nhlfe = nhlfe_build(cfg->fc_nlinfo.nl_net, cfg->fc_nhlfe);
+			nhlfe = nhlfe_build(cfg->fc_nlinfo.nl_net, cfg->fc_nhlfe, mpls_policy);
 			if (IS_ERR(nhlfe))
 				return PTR_ERR(nhlfe);
 		}
@@ -1737,8 +1721,7 @@ static int ip6_route_del(struct fib6_config *cfg)
 			dst_hold(&rt->dst);
 			read_unlock_bh(&table->tb6_lock);
 #if IS_ENABLED(CONFIG_MPLS)
-			if (nhlfe)
-				nhlfe_free(nhlfe);
+			nhlfe_free(nhlfe);
 #endif
 
 			return __ip6_del_rt(rt, &cfg->fc_nlinfo);
@@ -1746,8 +1729,7 @@ static int ip6_route_del(struct fib6_config *cfg)
 	}
 	read_unlock_bh(&table->tb6_lock);
 #if IS_ENABLED(CONFIG_MPLS)
-	if (nhlfe)
-		nhlfe_free(nhlfe);
+	nhlfe_free(nhlfe);
 #endif
 
 	return err;

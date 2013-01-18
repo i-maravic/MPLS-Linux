@@ -51,6 +51,7 @@ struct mpls_hdr_payload {
 	u8 data[MAX_HDR_ARRAY_SIZE]; /* data must be first */
 	__be32 daddr[4];
 	const struct nhlfe *nhlfe;
+	struct net_device *dev;
 	u8 data_len;
 };
 

@@ -1242,7 +1242,7 @@ static void fib6_del_route(struct fib6_node *fn, struct rt6_info **rtp,
 #if IS_ENABLED(CONFIG_MPLS)
 	if (rt->dst.nhlfe &&
 		   !(rt->rt6i_flags & RTF_CACHE))
-		nhlfe_free(rt->dst.nhlfe);
+		nhlfe_free_rcu(rt->dst.nhlfe);
 #endif
 	rt6_release(rt);
 }

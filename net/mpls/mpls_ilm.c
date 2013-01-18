@@ -42,15 +42,10 @@
 int ilm_net_id __read_mostly;
 
 static const struct {
-	struct nhlfe	nhlfe;
-	struct nlattr	pop_hdr;
-	u8		pop_cnt;
+	struct nhlfe nhlfe;
 } pop_peek_nhlfe = {
-	.nhlfe.datalen = NLA_HDRLEN + sizeof(u8),
+	.nhlfe.refcnt = ATOMIC_INIT(1),
 	.nhlfe.num_pop = 1,
-	.pop_hdr.nla_len = NLA_HDRLEN + sizeof(u8),
-	.pop_hdr.nla_type = MPLSA_POP,
-	.pop_cnt = 1,
 };
 
 static const struct ilm ipv4_explicit_null = {
@@ -73,9 +68,9 @@ static const struct ilm *mpls_reserved[MPLS_LABEL_MAX_RESERVED] = {
 };
 
 static inline void
-__destroy_ilm_instrs(struct ilm *ilm)
+__destroy_ilm_instrs_rcu(struct ilm *ilm)
 {
-	__nhlfe_free(ilm->nhlfe);
+	__nhlfe_free_rcu(ilm->nhlfe);
 	rcu_assign_pointer(ilm->nhlfe, NULL);
 }
 
@@ -177,29 +172,22 @@ __htable_free(struct rcu_head *head)
 }
 
 static inline void
-__hbucket_free(struct hbucket *bucket, bool leave_instr)
+__hbucket_free(struct hbucket *bucket)
 {
-	int j;
-	struct hbucket *n = bucket;
-
-	for (j = 0; j < n->size && !leave_instr; j++)
-		__destroy_ilm_instrs(__hash_data_rtnl(n, j));
-
-	if (n->size)
-		kfree(__hash_data_rtnl(n, 0));
+	if (bucket->size)
+		kfree(__hash_data_rtnl(bucket, 0));
 }
 
 static inline void
 __hbucket_free_rcu(struct hbucket *bucket, bool leave_instr)
 {
 	int j;
-	struct hbucket *n = bucket;
 
-	for (j = 0; j < n->size && !leave_instr; j++)
-		__destroy_ilm_instrs(__hash_data_rtnl(n, j));
+	for (j = 0; j < bucket->size && !leave_instr; j++)
+		__destroy_ilm_instrs_rcu(__hash_data_rtnl(bucket, j));
 
-	if (n->size)
-		kfree_rcu(__hash_data_rtnl(n, 0), rcu);
+	if (bucket->size)
+		kfree_rcu(__hash_data_rtnl(bucket, 0), rcu);
 }
 
 static size_t
@@ -247,14 +235,14 @@ __hash_destroy_rcu(struct htable *t, bool leave_instr)
 }
 
 static void
-__hash_destroy(struct htable *t, bool leave_instr)
+__hash_destroy(struct htable *t)
 {
 	struct hbucket *n;
 	u32 i;
 
 	for (i = 0; i < jhash_size(t->htable_bits); i++) {
 		n = hbucket(t, i);
-		__hbucket_free(n, leave_instr);
+		__hbucket_free(n);
 	}
 
 	__htable_free(&t->rcu);
@@ -356,7 +344,7 @@ retry:
 
 	if (unlikely(htable_bits > 31)) {
 		/* In case we have plenty of memory :-) */
-		printk(KERN_WARNING "Cannot increase the hashsize further\n");
+		printk(KERN_WARNING "MPLS: Cannot increase the hashsize further\n");
 		return -ENOBUFS;
 	}
 
@@ -376,7 +364,7 @@ retry:
 			new_ilm = __ilm_add(m, old_ilm->label, old_ilm->tc, HASH_MAX(h));
 
 			if (IS_ERR(new_ilm)) {
-				__hash_destroy(t, true);
+				__hash_destroy(t);
 				if (PTR_ERR(new_ilm) == -EAGAIN)
 					goto retry;
 				return PTR_ERR(new_ilm);
@@ -463,7 +451,7 @@ ilm_del(const struct net *net, u32 label, u8 tc, struct ilm *ilm)
 		if (ilm != NULL)
 			ilm_copy(ilm, data);
 
-		__destroy_ilm_instrs(data);
+		__destroy_ilm_instrs_rcu(data);
 
 		if (i != n->pos - 1)
 			/* Not last one */
@@ -531,13 +519,26 @@ get_ilm_input(const struct net *net, u32 label, u8 tc)
 static struct nla_policy ilm_policy[__MPLS_ATTR_MAX] __read_mostly = {
 	[MPLSA_POP]		= { .type = NLA_U8 },
 	[MPLSA_DSCP]		= { .type = NLA_U8 },
+#if IS_ENABLED(CONFIG_NET_SCHED)
 	[MPLSA_TC_INDEX]	= { .type = NLA_U16 },
+#else
+	[MPLSA_TC_INDEX]	= { .type = NLA_PROHIBIT },
+#endif
 	[MPLSA_SWAP]		= { .type = NLA_U32 },
 	[MPLSA_PUSH]		= { .type = NLA_BINARY },
+#if CONFIG_NET_NS
 	[MPLSA_NETNS_FD]	= { .type = NLA_U32 },
 	[MPLSA_NETNS_PID]	= { .type = NLA_U32 },
 	[MPLSA_NETNS_NAME]	= { .type = NLA_STRING, .len = MPLS_NETNS_NAME_MAX },
+	[MPLSA_NEXTHOP_GLOBAL]	= { .type = NLA_FLAG },
 	[MPLSA_NEXTHOP_IFNAME]	= { .type = NLA_STRING, .len = IFNAMSIZ },
+#else
+	[MPLSA_NETNS_FD]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NETNS_PID]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NETNS_NAME]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NEXTHOP_GLOBAL]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NEXTHOP_IFNAME]	= { .type = NLA_PROHIBIT },
+#endif
 	[MPLSA_NEXTHOP_OIF]	= { .type = NLA_U32 },
 	[MPLSA_NEXTHOP_ADDR]	= { .type = NLA_BINARY },
 };
@@ -551,6 +552,8 @@ int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4, void *extra)
 	skb = ip_finish_skb(sk, fl4);
 	if (!skb)
 		return 0;
+
+	skb->dev = payload->dev;
 
 	iph = ip_hdr(skb);
 	iph->tot_len = htons(skb->len);
@@ -570,10 +573,21 @@ static inline void
 send_icmp_time_exceeded(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
 	struct mpls_hdr_payload buf;
+	struct net *net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(skb->dev);
+	struct dst_entry *dst;
+
+	dst = nhlfe_get_nexthop_dst(nhlfe, net, skb);
+	if (IS_ERR(dst))
+		return;
+
+	skb_dst_set(skb, dst);
 
 	if (unlikely(strip_mpls_headers(skb, &buf) != 0))
 		return;
+
 	buf.nhlfe = nhlfe;
+	buf.dev = skb->dev;
+
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
 		__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
@@ -600,6 +614,7 @@ mpls_input(struct sk_buff *skb, struct net_device *dev, u32 label, u8 tc)
 	ilm = get_ilm_input(dev_net(skb->dev), label, tc);
 	if (unlikely(ilm == NULL))
 		goto err;
+
 	nhlfe = rcu_dereference(ilm->nhlfe);
 	if (unlikely(nhlfe == NULL))
 		goto err;
@@ -607,25 +622,19 @@ mpls_input(struct sk_buff *skb, struct net_device *dev, u32 label, u8 tc)
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_INPACKETS);
 	MPLS_ADD_STATS_BH(dev_net(dev), MPLS_MIB_INOCTETS, skb->len);
 
-	if (nhlfe->nh == NULL) {
+	if (nhlfe->flags & MPLS_HAS_NH) {
 		if (MPLSCB(skb)->hdr.ttl <= 1) {
 			send_icmp_time_exceeded(skb, nhlfe);
 			MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_OUTDISCARDS);
 			goto free_skb;
 		}
-		/* FIXME: make sure decremented ttl is flushed out to skb */
 		MPLSCB(skb)->hdr.ttl--;
 	}
 	ret = nhlfe_send(nhlfe, skb);
 
-	if (ret == NET_XMIT_SUCCESS)
-		ret = NET_RX_SUCCESS;
-	else
-		ret = NET_RX_DROP;
-
 	rcu_read_unlock();
 
-	return ret;
+	return (ret == NET_XMIT_SUCCESS) ? NET_RX_SUCCESS : NET_RX_DROP;
 
 err:
 	MPLS_INC_STATS_BH(dev_net(dev), MPLS_MIB_IFINLABELLOOKUPFAILURES);
@@ -789,11 +798,7 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 	if (!rta[RTA_MPLS])
 		return -EINVAL;
 
-	err = nla_validate_nested(rta[RTA_MPLS], __MPLS_ATTR_MAX, ilm_policy);
-	if (err < 0)
-		return err;
-
-	nhlfe = __nhlfe_build(net, rta[RTA_MPLS]);
+	nhlfe = __nhlfe_build(net, rta[RTA_MPLS], ilm_policy, NULL);
 
 	if (IS_ERR(nhlfe))
 		return PTR_ERR(nhlfe);
@@ -802,7 +807,7 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 		ilm = get_ilm(net, label, tc, true);
 
 	if (ilm)
-		__nhlfe_free(rtnl_dereference(ilm->nhlfe));
+		__nhlfe_free_rcu(rtnl_dereference(ilm->nhlfe));
 	else if (nlh->nlmsg_flags & NLM_F_CREATE) {
 		ilm = ilm_add(net, label, tc);
 		if (IS_ERR(ilm)) {
@@ -812,10 +817,8 @@ mpls_ilm_new(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 	} else
 		return -ESRCH;
 
-	if (nhlfe->net) {
-		nhlfe->label = ilm->label;
-		nhlfe->tc = ilm->tc;
-	}
+	nhlfe->net_key.label = ilm->label;
+	nhlfe->net_key.tc = ilm->tc;
 
 	ilm->owner = rtm->rtm_protocol;
 	rcu_assign_pointer(ilm->nhlfe, nhlfe);
@@ -934,7 +937,7 @@ static void __net_exit ilm_exit_net(struct net *net)
 
 	if (likely(!net_eq(&init_net, net)))
 		hlist_for_each_entry_safe(nhlfe, pos, n, &ilmn->portal, portal)
-			ilm_del(&init_net, nhlfe->label, nhlfe->tc, NULL);
+			ilm_del(&init_net, nhlfe->net_key.label, nhlfe->net_key.tc, NULL);
 
 	rtnl_unlock();
 }

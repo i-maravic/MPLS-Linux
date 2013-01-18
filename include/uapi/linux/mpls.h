@@ -41,13 +41,13 @@ enum mplsattr_type_t {
 struct mpls_hdr {
 	__be16	label_msb;
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u8	s:1;
-	__u8	tc:3;
-	__u8	label_lsb:4;
+	__u32	s:1;
+	__u32	tc:3;
+	__u32	label_lsb:4;
 #elif defined (__BIG_ENDIAN_BITFIELD)
-	__u8	label_lsb:4;
-	__u8	tc:3;
-	__u8	s:1;
+	__u32	label_lsb:4;
+	__u32	tc:3;
+	__u32	s:1;
 #else
 #error	"Please fix <asm/byteorder.h>"
 #endif
