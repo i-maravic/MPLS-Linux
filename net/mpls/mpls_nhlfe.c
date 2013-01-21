@@ -621,20 +621,48 @@ struct dst_entry *nhlfe_get_nexthop_dst(const struct nhlfe *nhlfe, struct net *n
 static int mpls_pop(struct sk_buff *skb, int pop)
 {
 	struct mpls_skb_cb *cb = MPLSCB(skb);
+	struct mpls_hdr *mplshdr;
 	struct net *net = dev_net(skb->dev);
 	int propagate_ttl = mpls_propagate_ttl(net);
 	int propagate_tc = mpls_propagate_tc(net);
 
-	if (unlikely(skb->protocol != htons(ETH_P_MPLS_UC) ||
-		     !pskb_may_pull(skb, pop * MPLS_HDR_LEN)))
+	if (unlikely(skb->protocol != htons(ETH_P_MPLS_UC)))
+		goto discard;
+
+	if (unlikely(pop == POP_ALL)) {
+		u32 data_len = MPLS_HDR_LEN;
+
+		mplshdr = mpls_hdr(skb);
+		while (!mplshdr->s) {
+			if (unlikely(!pskb_may_pull(skb, data_len)))
+				goto discard;
+
+			data_len += MPLS_HDR_LEN;
+			mplshdr++;
+		}
+
+		skb_pull(skb, data_len);
+		skb_reset_network_header(skb);
+
+		/*
+		 * Reset number of pops and S bit
+		 * so we could jump in to the while loop below
+		 */
+		pop = 0;
+		cb->hdr.s = 1;
+		goto set_ip_params;
+	}
+
+	if (unlikely(!pskb_may_pull(skb, pop * MPLS_HDR_LEN)))
 		goto discard;
 
 	while (pop-- > 0) {
 		skb_pull(skb, MPLS_HDR_LEN);
 		skb_reset_network_header(skb);
 
+set_ip_params:
 		if (!cb->hdr.s) {
-			struct mpls_hdr *mplshdr = mpls_hdr(skb);
+			mplshdr = mpls_hdr(skb);
 			mplshdr->ttl = cb->hdr.ttl;
 			mplshdr->tc = cb->hdr.tc;
 			mpls_peek_label(skb);
@@ -682,7 +710,8 @@ static int mpls_swap(struct sk_buff *skb, const struct mpls_hdr *swap)
 	struct mpls_hdr *mplshdr;
 	__u32 label;
 
-	if (skb->protocol != htons(ETH_P_MPLS_UC))
+	if (unlikely(skb->protocol != htons(ETH_P_MPLS_UC) ||
+			!pskb_may_pull(skb, MPLS_HDR_LEN)))
 		return NET_XMIT_DROP;
 
 	label = mpls_hdr_label(swap);

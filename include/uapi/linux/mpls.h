@@ -19,6 +19,7 @@
 
 #define TC_MAX ((1 << 3) - 1)
 #define DSCP_MAX ((1 << 8) - 1)
+#define POP_ALL ((1 << 8) - 1)
 
 enum mplsattr_type_t {
 	MPLSA_UNSPEC,
