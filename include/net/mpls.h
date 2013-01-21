@@ -114,9 +114,9 @@ struct nhlfe {
 		struct hlist_node portal; /* For netns accounting */
 	};
 	atomic_t refcnt;
+#define NHLFE_CMPR_START(ptr) ((char *)(&((struct nhlfe *)ptr)->dead))
 	u8 dead;
 	/* NHLFE data */
-#define NHLFE_CMPR_START(nhlfe) ((char *)(&(nhlfe)->flags))
 	u8 flags;
 #define MPLS_HAS_NH		0x01
 #define MPLS_NH_GLOBAL		0x02
@@ -151,8 +151,7 @@ struct nhlfe {
 
 #define NHLFE_ALIGN sizeof(long long)
 
-#define NHLFE_CMPR_OFFSET(nhlfe)							\
-	(NHLFE_CMPR_START(nhlfe) - (char *)(nhlfe))
+#define NHLFE_CMPR_OFFSET(nhlfe) ((unsigned long long)NHLFE_CMPR_START(0))
 
 #define NHLFE_SIZE(num_push, swap)							\
 	(sizeof(struct nhlfe) + (((num_push) + (swap)) * MPLS_HDR_LEN))
