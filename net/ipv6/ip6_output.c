@@ -612,8 +612,7 @@ void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
 	fhdr->identification = htonl(new);
 }
 
-int __ip6_fragment(struct sk_buff *skb, const void *data,
-			int (*output)(struct sk_buff *, const void *))
+int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 {
 	struct sk_buff *frag;
 	struct rt6_info *rt = (struct rt6_info*)skb_dst(skb);
@@ -654,10 +653,7 @@ int __ip6_fragment(struct sk_buff *skb, const void *data,
 			mtu = np->frag_size;
 	}
 	mtu -= hlen + sizeof(struct frag_hdr);
-#if IS_ENABLED(CONFIG_MPLS)
-	if (data && (IP6CB(skb)->flags & IP6SKB_MPLS_TUNNEL))
-		mtu -= MPLSCB(skb)->mpls_hdr_len;
-#endif
+	mtu -= nf_mpls_pad(skb);
 
 	if (skb_has_frag_list(skb)) {
 		int first_len = skb_pagelen(skb);
@@ -745,7 +741,7 @@ int __ip6_fragment(struct sk_buff *skb, const void *data,
 				ip6_copy_metadata(frag, skb);
 			}
 
-			err = output(skb, data);
+			err = output(skb);
 			if(!err)
 				IP6_INC_STATS(net, ip6_dst_idev(&rt->dst),
 					      IPSTATS_MIB_FRAGCREATES);
@@ -801,7 +797,7 @@ slow_path:
 	 */
 
 	*prevhdr = NEXTHDR_FRAGMENT;
-	hroom = LL_RESERVED_SPACE(rt->dst.dev);
+	hroom = LL_RESERVED_SPACE_EXTRA(rt->dst.dev, nf_mpls_pad(skb));
 	troom = rt->dst.dev->needed_tailroom;
 
 	/*
@@ -884,7 +880,7 @@ slow_path:
 		/*
 		 *	Put this fragment into the sending queue.
 		 */
-		err = output(frag, data);
+		err = output(frag);
 		if (err)
 			goto fail;
 
@@ -902,7 +898,7 @@ fail:
 	kfree_skb(skb);
 	return err;
 }
-EXPORT_SYMBOL(__ip6_fragment);
+EXPORT_SYMBOL(ip6_fragment);
 
 static inline int ip6_rt_check(const struct rt6key *rt_key,
 			       const struct in6_addr *fl_addr,

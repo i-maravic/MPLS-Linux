@@ -59,6 +59,23 @@ struct mpls_ops {
 
 extern struct mpls_ops *mpls_ops;
 
+#if IS_ENABLED(CONFIG_MPLS)
+
+/* This is called by the IP fragmenting code and it ensures there is
+ * enough room for the MPLS headers (if there are any). */
+static inline unsigned int nf_mpls_pad(const struct sk_buff *skb)
+{
+	if (skb->nf_mpls)
+		return skb->nf_mpls->hdr_len;
+	return 0;
+}
+
+#else
+
+#define nf_bridge_pad(skb) (0)
+
+#endif
+
 /*
  * SNMP statistics for MPLS
  */
@@ -80,15 +97,7 @@ static inline struct mpls_hdr *mpls_hdr(const struct sk_buff *skb)
 }
 
 struct mpls_skb_cb {
-	union {
-		struct inet_skb_parm ___pad1;
-#if IS_ENABLED(CONFIG_IPV6)
-		struct inet6_skb_parm ___pad2;
-#endif
-	};
 	struct mpls_hdr hdr;
-	__be32 daddr[4];
-	int mpls_hdr_len;
 };
 
 #define MPLSCB(skb) ((struct mpls_skb_cb *)((skb)->cb))
@@ -149,7 +158,7 @@ struct nhlfe {
 	struct mpls_hdr data[0];
 };
 
-#define NHLFE_ALIGN sizeof(long long)
+#define MPLS_ALIGN sizeof(long long)
 
 #define NHLFE_CMPR_OFFSET(nhlfe) ((unsigned long long)NHLFE_CMPR_START(0))
 

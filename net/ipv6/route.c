@@ -135,8 +135,13 @@ static inline const void *choose_neigh_daddr(struct rt6_info *rt,
 
 	if (!ipv6_addr_any(p))
 		return (const void *) p;
-	else if (skb)
+	else if (skb) {
+#if IS_ENABLED(CONFIG_MPLS)
+		if (skb->nf_mpls)
+			return skb->nf_mpls->daddr;
+#endif
 		return &ipv6_hdr(skb)->daddr;
+	}
 	return daddr;
 }
 

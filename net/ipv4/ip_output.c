@@ -451,8 +451,7 @@ static void ip_copy_metadata(struct sk_buff *to, struct sk_buff *from)
  *	single device frame, and queue such a frame for sending.
  */
 
-int __ip_fragment(struct sk_buff *skb, const void *data,
-		int (*output)(struct sk_buff *, const void *))
+int ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 {
 	struct iphdr *iph;
 	int ptr;
@@ -492,10 +491,8 @@ int __ip_fragment(struct sk_buff *skb, const void *data,
 	if (skb->nf_bridge)
 		mtu -= nf_bridge_mtu_reduction(skb);
 #endif
-#if IS_ENABLED(CONFIG_MPLS)
-	if (data && (IPCB(skb)->flags & IPSKB_MPLS_TUNNEL))
-		mtu -= MPLSCB(skb)->mpls_hdr_len;
-#endif
+	mtu -= nf_mpls_pad(skb);
+
 	IPCB(skb)->flags |= IPSKB_FRAG_COMPLETE;
 
 	/* When frag_list is given, use it. First, check its validity:
@@ -568,7 +565,7 @@ int __ip_fragment(struct sk_buff *skb, const void *data,
 				ip_send_check(iph);
 			}
 
-			err = output(skb, data);
+			err = output(skb);
 
 			if (!err)
 				IP_INC_STATS(dev_net(dev), IPSTATS_MIB_FRAGCREATES);
@@ -610,7 +607,7 @@ slow_path:
 	/* for bridged IP traffic encapsulated inside f.e. a vlan header,
 	 * we need to make room for the encapsulating header
 	 */
-	ll_rs = LL_RESERVED_SPACE_EXTRA(rt->dst.dev, nf_bridge_pad(skb));
+	ll_rs = LL_RESERVED_SPACE_EXTRA(rt->dst.dev, nf_bridge_pad(skb) + nf_mpls_pad(skb));
 
 	/*
 	 *	Fragment the datagram.
@@ -705,7 +702,7 @@ slow_path:
 
 		ip_send_check(iph);
 
-		err = output(skb2, data);
+		err = output(skb2);
 		if (err)
 			goto fail;
 
@@ -720,7 +717,7 @@ fail:
 	IP_INC_STATS(dev_net(dev), IPSTATS_MIB_FRAGFAILS);
 	return err;
 }
-EXPORT_SYMBOL(__ip_fragment);
+EXPORT_SYMBOL(ip_fragment);
 
 int
 ip_generic_getfrag(void *from, char *to, int offset, int len, int odd, struct sk_buff *skb)

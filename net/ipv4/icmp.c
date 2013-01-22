@@ -111,8 +111,6 @@ struct icmp_bxm {
 		__be32	       times[3];
 	} data;
 
-	void *icmp_e_data;	/* ICMP Extension object data */
-
 	int head_len;
 	struct ip_options_data replyopts;
 };
@@ -293,13 +291,19 @@ static int icmp_glue_bits(void *from, char *to, int offset, int len, int odd,
 	skb->csum = csum_block_add(skb->csum, csum, odd);
 	if (icmp_pointers[icmp_param->data.icmph.type].error)
 		nf_ct_attach(skb, icmp_param->skb);
+#if IS_ENABLED(CONFIG_MPLS)
+	nf_mpls_put(skb->nf_mpls);
+	skb->nf_mpls = icmp_param->skb->nf_mpls;
+	nf_mpls_get(skb->nf_mpls);
+#endif
+
 	return 0;
 }
 
 static void
 __icmp_push_reply(struct icmp_bxm *icmp_param, struct flowi4 *fl4,
 		    struct ipcm_cookie *ipc, struct rtable **rt,
-		    int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4, void *extra))
+		    int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4))
 {
 	struct sock *sk;
 	struct sk_buff *skb;
@@ -324,21 +328,15 @@ __icmp_push_reply(struct icmp_bxm *icmp_param, struct flowi4 *fl4,
 						 icmp_param->head_len, csum);
 		icmph->checksum = csum_fold(csum);
 		skb->ip_summed = CHECKSUM_NONE;
-		push_pending_frames(sk, fl4, icmp_param->icmp_e_data);
+		push_pending_frames(sk, fl4);
 	}
-}
-
-static inline int
-ip_push_pending_frames_wrapper(struct sock *sk, struct flowi4 *fl4, void *extra)
-{
-	return ip_push_pending_frames(sk, fl4);
 }
 
 static inline void
 icmp_push_reply(struct icmp_bxm *icmp_param, struct flowi4 *fl4,
 		    struct ipcm_cookie *ipc, struct rtable **rt)
 {
-	return __icmp_push_reply(icmp_param, fl4, ipc, rt, ip_push_pending_frames_wrapper);
+	return __icmp_push_reply(icmp_param, fl4, ipc, rt, ip_push_pending_frames);
 }
 
 /*
@@ -688,7 +686,7 @@ EXPORT_SYMBOL(icmp_send);
 
 void __icmp_ext_send(struct sk_buff *skb_in, int type, int code, __be32 info,
 		u16 ext_length, u8 ext_class, u8 ext_c_type, void *ext_data,
-		int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4, void *extra))
+		int (* push_pending_frames) (struct sock *sk, struct flowi4 *fl4))
 {
 	struct iphdr *iph = ip_hdr(skb_in);
 	int room;
@@ -801,8 +799,6 @@ void __icmp_ext_send(struct sk_buff *skb_in, int type, int code, __be32 info,
 		if (icmp_param.data_len > room)
 			icmp_param.data_len = room;
 	}
-
-	icmp_param.icmp_e_data = ext_data;
 
 	__icmp_push_reply(&icmp_param, &fl4, &ipc, &rt, push_pending_frames);
 ende:

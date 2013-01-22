@@ -543,36 +543,9 @@ static struct nla_policy ilm_policy[__MPLS_ATTR_MAX] __read_mostly = {
 	[MPLSA_NEXTHOP_ADDR]	= { .type = NLA_BINARY },
 };
 
-int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4, void *extra)
-{
-	struct sk_buff *skb;
-	struct iphdr *iph;
-	struct mpls_hdr_payload *payload = (struct mpls_hdr_payload *)extra;
-
-	skb = ip_finish_skb(sk, fl4);
-	if (!skb)
-		return 0;
-
-	skb->dev = payload->dev;
-
-	iph = ip_hdr(skb);
-	iph->tot_len = htons(skb->len);
-	ip_send_check(iph);
-
-	if (unlikely(!__push_mpls_hdr_payload(skb, payload)))
-		goto err;
-
-	mpls_hdr(skb)->ttl = MPLSCB(skb)->hdr.ttl = iph->ttl;
-
-	return nhlfe_send(payload->nhlfe, skb);
-err:
-	return -ENOBUFS;
-}
-
 static inline void
 send_icmp_time_exceeded(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
-	struct mpls_hdr_payload buf;
 	struct net *net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(skb->dev);
 	struct dst_entry *dst;
 
@@ -582,18 +555,18 @@ send_icmp_time_exceeded(struct sk_buff *skb, const struct nhlfe *nhlfe)
 
 	skb_dst_set(skb, dst);
 
-	if (unlikely(strip_mpls_headers(skb, &buf) != 0))
+	if (unlikely(strip_mpls_headers(skb) != 0))
 		return;
 
-	buf.nhlfe = nhlfe;
-	buf.dev = skb->dev;
+	nf_mpls_nhlfe(skb->nf_mpls) = nhlfe;
+	nf_mpls_dev(skb->nf_mpls) = skb->dev;
 
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
 		__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
-				buf.data_len,
+				skb->nf_mpls->hdr_len,
 				ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
-				&buf, mpls_send_mpls_ipv4);
+				nf_mpls_hdr_stack(skb->nf_mpls), mpls_send_mpls_ipv4);
 		break;
 #if IS_ENABLED(CONFIG_IPV6)
 	case htons(ETH_P_IPV6):

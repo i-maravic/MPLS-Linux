@@ -122,6 +122,12 @@ discard:
 	return NET_XMIT_DROP;
 }
 
+static inline void set_mpls_ttl(struct sk_buff *skb, u8 ttl)
+{
+	if (likely(skb->protocol == htons(ETH_P_MPLS_UC)))
+		mpls_hdr(skb)->ttl = ttl;
+}
+
 static inline u8 get_ttl(struct sk_buff *skb)
 {
 	switch(skb->protocol) {
@@ -169,6 +175,42 @@ ipv6_has_fragment_hdr(const struct ipv6hdr *ip6hdr, const struct sk_buff *skb)
 }
 #endif
 
+#define NF_MPLS_SIZE(hdr_len, has_info)							\
+	({										\
+		size_t size;								\
+		if (!has_info)								\
+			size = sizeof(struct nf_mpls);					\
+		else									\
+			size = sizeof(struct nf_mpls) + 2 * sizeof(void **) + hdr_len * sizeof(u32);\
+		ALIGN(size, MPLS_ALIGN);						\
+	})
+
+static inline struct nf_mpls *nf_mpls_alloc(struct sk_buff *skb, u16 hdr_len, u16 has_info)
+{
+	skb->nf_mpls = kzalloc(NF_MPLS_SIZE(hdr_len, has_info), GFP_ATOMIC);
+	if (likely(skb->nf_mpls)) {
+		atomic_set(&(skb->nf_mpls->use), 1);
+		skb->nf_mpls->hdr_len = hdr_len;
+		skb->nf_mpls->has_info = has_info;
+	}
+
+	return skb->nf_mpls;
+}
+
+static inline struct nf_mpls *nf_mpls_unshare(struct sk_buff *skb, u16 hdr_len, u16 has_info)
+{
+	struct nf_mpls *nf_mpls = skb->nf_mpls;
+
+	if (likely(!nf_mpls || nf_mpls->hdr_len != hdr_len || nf_mpls->has_info != has_info) ||
+		    atomic_read(&nf_mpls->use) > 1) {
+		struct nf_mpls *tmp = nf_mpls_alloc(skb, hdr_len, has_info);
+		if (likely(nf_mpls && tmp))
+			memcpy(tmp->daddr, nf_mpls->daddr, sizeof(((struct nf_mpls *)0)->daddr));
+		nf_mpls_put(nf_mpls);
+	}
+	return skb->nf_mpls;
+}
+
 static inline
 struct dst_entry *nhlfe_get_dst_ipv4(const struct nhlfe *nhlfe,
 				     struct net *net, struct sk_buff *skb)
@@ -185,8 +227,13 @@ struct dst_entry *nhlfe_get_dst_ipv4(const struct nhlfe *nhlfe,
 		return dst;
 
 	if (skb) {
-		struct mpls_skb_cb *cb = MPLSCB(skb);
-		memcpy(cb->daddr, &nhlfe->nh.ipv4.s_addr, sizeof(nhlfe->nh.ipv4.s_addr));
+		struct nf_mpls *tmp = nf_mpls_unshare(skb, 0, 0);
+		if (likely(tmp))
+			memcpy(tmp->daddr, &nhlfe->nh.ipv4.s_addr, sizeof(nhlfe->nh.ipv4.s_addr));
+		else {
+			dst_release(dst);
+			return ERR_PTR(-ENOMEM);
+		}
 	}
 
 	return dst;
@@ -211,49 +258,51 @@ struct dst_entry *nhlfe_get_dst_ipv6(const struct nhlfe *nhlfe,
 	}
 
 	if (skb) {
-		struct mpls_skb_cb *cb = MPLSCB(skb);
-		memcpy(cb->daddr, &nhlfe->nh.ipv6.s6_addr, sizeof(nhlfe->nh.ipv6.s6_addr));
+		struct nf_mpls *tmp = nf_mpls_unshare(skb, 0, 0);
+		if (likely(tmp))
+			memcpy(tmp->daddr, &nhlfe->nh.ipv6.s6_addr, sizeof(nhlfe->nh.ipv6.s6_addr));
+		else {
+			dst_release(dst);
+			return ERR_PTR(-ENOMEM);
+		}
 	}
 	return dst;
 }
 #endif
 
-bool __push_mpls_hdr_payload(struct sk_buff *skb, const struct mpls_hdr_payload *payload)
+bool __push_mpls_hdr_payload(struct sk_buff *skb)
 {
-	struct mpls_skb_cb *cb = MPLSCB(skb);
 	struct dst_entry *dst = skb_dst(skb);
+	struct nf_mpls *nf_mpls = skb->nf_mpls;
+	u16 data_len = nf_mpls->hdr_len;
 
-	if (unlikely(payload->data_len > MAX_HDR_ARRAY_SIZE)) {
-		WARN_ON_ONCE(payload->data_len > MAX_HDR_ARRAY_SIZE);
+	BUG_ON(!nf_mpls);
+
+	if (unlikely(skb_cow_head(skb, data_len + LL_RESERVED_SPACE(dst->dev)) < 0))
 		goto err;
-	}
 
-	if (unlikely(skb_cow_head(skb, payload->data_len + LL_RESERVED_SPACE(dst->dev)) < 0))
-		goto err;
-
-	if (payload->data_len) {
-		skb_push(skb, payload->data_len);
+	if (data_len) {
+		skb_push(skb, data_len);
 		skb_reset_network_header(skb);
-		memcpy(skb_network_header(skb), payload->data, payload->data_len);
+		memcpy(skb_network_header(skb), nf_mpls_hdr_stack(nf_mpls), data_len);
 
 		if (unlikely(skb->len > dst_mtu(dst)))
 			goto err;
 		skb->protocol = htons(ETH_P_MPLS_UC);
 		mpls_peek_label(skb);
 	}
-	memcpy(cb->daddr, payload->daddr, sizeof(payload->daddr));
+
 	return true;
 err:
 	return false;
 }
 
-int strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload)
+int strip_mpls_headers(struct sk_buff *skb)
 {
 	struct mpls_hdr *hdr = mpls_hdr(skb);
 	struct iphdr *iph;
-	struct mpls_skb_cb *cb = MPLSCB(skb);
-
-	memcpy(payload->daddr, cb->daddr, sizeof(cb->daddr));
+	u16 data_len;
+	struct nf_mpls *nf_mpls;
 
 	if (skb->protocol == htons(ETH_P_IP)
 
@@ -261,27 +310,29 @@ int strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload)
 		   || skb->protocol == htons(ETH_P_IPV6)
 #endif
 		   ) {
-		payload->data_len = 0;
+		data_len = 0;
 		goto found_ip;
 	}
 
 	if (skb->protocol != htons(ETH_P_MPLS_UC))
 		goto err;
 
-	payload->data_len = MPLS_HDR_LEN;
+	data_len = MPLS_HDR_LEN;
 	while (!hdr->s) {
-		if (unlikely(!pskb_may_pull(skb, payload->data_len)))
+		if (unlikely(!pskb_may_pull(skb, data_len)))
 			goto err;
-		payload->data_len += MPLS_HDR_LEN;
+		data_len += MPLS_HDR_LEN;
 		hdr++;
 	}
 
-	if (unlikely(payload->data_len > MAX_HDR_ARRAY_SIZE))
-		goto err;
+found_ip:
+	nf_mpls = nf_mpls_unshare(skb, data_len, 1);
+	if (unlikely(!nf_mpls))
+		return -ENOMEM;
 
-	memcpy(payload->data, mpls_hdr(skb), payload->data_len);
+	memcpy(nf_mpls_hdr_stack(nf_mpls), mpls_hdr(skb), data_len);
 
-	skb_pull(skb, payload->data_len);
+	skb_pull(skb, data_len);
 	skb_reset_network_header(skb);
 
 	iph = ip_hdr(skb);
@@ -292,22 +343,23 @@ int strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload)
 		skb->protocol = htons(ETH_P_IPV6);
 	else
 		goto err;
-found_ip:
+
 	return 0;
 
 err:
 	return -EINVAL;
 }
 
-static inline int mpls_finish_send(struct sk_buff *skb, const void *data)
+static inline int mpls_finish_send(struct sk_buff *skb)
 {
 	struct neighbour *neigh;
 	u32 packet_length = skb->len;
-	struct mpls_skb_cb *cb = MPLSCB(skb);
 	struct dst_entry *dst = skb_dst(skb);
 	struct net *net = dev_net(dst->dev);
 
-	neigh = dst_neigh_lookup(dst, cb->daddr);
+	BUG_ON(!skb->nf_mpls);
+
+	neigh = dst_neigh_lookup(dst, skb->nf_mpls->daddr);
 	if (unlikely(!neigh))
 		goto err;
 
@@ -325,50 +377,43 @@ err:
 	return NET_XMIT_DROP;
 }
 
-static int mpls_finish_send2(struct sk_buff *skb, const void *data)
+static int mpls_finish_send2(struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct net *net = dev_net(dst->dev);
 
-	if (unlikely(!__push_mpls_hdr_payload(skb, data))) {
+	if (unlikely(!__push_mpls_hdr_payload(skb))) {
 		dev_kfree_skb(skb);
 		MPLS_INC_STATS_BH(net, MPLS_MIB_OUTERRORS);
 		return NET_XMIT_DROP;
 	}
 	MPLS_INC_STATS_BH(net, MPLS_MIB_IFOUTFRAGMENTEDPKTS);
-	return mpls_finish_send(skb, data);
+	return mpls_finish_send(skb);
 }
 
 static int mpls_fragment_packet(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
 	int ret;
 	struct net *net = dev_net(skb_dst(skb)->dev);
-	struct mpls_hdr_payload buf;
 
 	if (unlikely(!(nhlfe->flags & MPLS_HAS_NH)))
 		goto err;
 
-	ret = strip_mpls_headers(skb, &buf);
+	ret = strip_mpls_headers(skb);
 	if (unlikely(ret))
 		goto err;
 
 	if (unlikely(!pskb_may_pull(skb, sizeof(struct iphdr))))
 		goto err;
 
-	MPLSCB(skb)->mpls_hdr_len = buf.data_len;
-
-	WARN_ON(MPLSCB(skb)->mpls_hdr_len < 0);
-
 	if (skb->protocol == htons(ETH_P_IP)) {
 		BUG_ON(ip_hdr(skb)->frag_off & htons(IP_DF));
-		IPCB(skb)->flags |= IPSKB_MPLS_TUNNEL;
-		return __ip_fragment(skb, &buf, mpls_finish_send2);
+		return ip_fragment(skb, mpls_finish_send2);
 	}
 #if IS_ENABLED(CONFIG_IPV6)
 	else if (skb->protocol == htons(ETH_P_IPV6)) {
 		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(ipv6_hdr(skb), skb));
-		IP6CB(skb)->flags |= IP6SKB_MPLS_TUNNEL;
-		return __ip6_fragment(skb, &buf, mpls_finish_send2);
+		return ip6_fragment(skb, mpls_finish_send2);
 	}
 #endif
 err:
@@ -379,9 +424,10 @@ err:
 
 static inline int mpls_send(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
+	BUG_ON(!skb->nf_mpls);
 	if (unlikely(skb->len > dst_mtu(skb_dst(skb))))
 		return mpls_fragment_packet(skb, nhlfe);
-	return mpls_finish_send(skb, NULL);
+	return mpls_finish_send(skb);
 }
 
 static struct nhlfe *
@@ -389,7 +435,7 @@ nhlfe_alloc(int num_push, int has_swap)
 {
 	struct nhlfe *nhlfe;
 	size_t sz = NHLFE_SIZE(num_push, has_swap);
-	sz = ALIGN(sz, NHLFE_ALIGN);
+	sz = ALIGN(sz, MPLS_ALIGN);
 
 	nhlfe = kzalloc(sz, GFP_KERNEL);
 	if (unlikely(nhlfe == NULL))
@@ -778,23 +824,53 @@ static int mpls_receive_local(struct sk_buff *skb, const struct net *net)
 	return NET_XMIT_SUCCESS;
 }
 
+int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4)
+{
+	struct sk_buff *skb;
+	struct nf_mpls *nf_mpls;
+	struct iphdr *iph;
+	u8 ttl;
+
+	skb = ip_finish_skb(sk, fl4);
+	if (!skb)
+		return 0;
+
+	nf_mpls = skb->nf_mpls;
+	BUG_ON(!nf_mpls);
+
+	skb->dev = nf_mpls_dev(nf_mpls);
+
+	iph = ip_hdr(skb);
+	ttl = iph->ttl;
+	iph->tot_len = htons(skb->len);
+	ip_send_check(iph);
+
+	if (unlikely(!__push_mpls_hdr_payload(skb)))
+		goto err;
+
+	set_mpls_ttl(skb, ttl);
+	MPLSCB(skb)->hdr.ttl = ttl;
+
+	return nhlfe_send(nf_mpls_nhlfe(nf_mpls), skb);
+err:
+	return -ENOBUFS;
+}
+
 static void send_frag_needed(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
-	struct mpls_hdr_payload buf;
-
-	if (unlikely(strip_mpls_headers(skb, &buf) != 0))
+	if (unlikely(strip_mpls_headers(skb) != 0))
 		return;
 
-	buf.nhlfe = nhlfe;
-	buf.dev = skb->dev;
+	nf_mpls_nhlfe(skb->nf_mpls) = nhlfe;
+	nf_mpls_dev(skb->nf_mpls) = skb->dev;
 
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
 		__icmp_ext_send(skb, ICMP_DEST_UNREACH,
 				ICMP_FRAG_NEEDED, htonl(dst_mtu(skb_dst(skb))),
-				buf.data_len,
+				skb->nf_mpls->hdr_len,
 				ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
-				&buf, mpls_send_mpls_ipv4);
+				nf_mpls_hdr_stack(skb->nf_mpls), mpls_send_mpls_ipv4);
 		break;
 #if IS_ENABLED(CONFIG_IPV6)
 	case htons(ETH_P_IPV6):
@@ -843,6 +919,13 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	struct net *net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(skb->dev);
 	struct net *rcv_net = dev_net(skb->dev);
 	const struct mpls_hdr *hdrs = nhlfe->data;
+	int set_ttl = 1;
+
+	/* Reset skb's nf fields, before obtaining dst!
+	 * If we would reset it after obtaining dst,
+	 * we would invalidate the nf_mpls member too!
+	 */
+	nf_reset(skb);
 
 	if ((skb->protocol == htons(ETH_P_IP)
 #if IS_ENABLED(CONFIG_IPV6)
@@ -873,7 +956,6 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 		if (likely(orig_dst))
 			orig_dst->ops->update_pmtu(orig_dst, NULL, skb, mtu);
 
-		nf_reset(skb);
 		skb_dst_drop(skb);
 		skb_dst_set(skb, dst);
 
@@ -912,6 +994,7 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 
 	if (nhlfe->num_pop) {
 		err = mpls_pop(skb, nhlfe->num_pop);
+		set_ttl = 0;
 		if (unlikely(err))
 			goto link_failure;
 	}
@@ -929,6 +1012,7 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 
 	if (nhlfe->has_swap) {
 		err = mpls_swap(skb, hdrs);
+		set_ttl = 0;
 		if (unlikely(err))
 			goto link_failure;
 		hdrs++;
@@ -936,12 +1020,16 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 
 	if (nhlfe->num_push) {
 		err = mpls_push(skb, hdrs, nhlfe->num_push);
+		set_ttl = 0;
 		if (unlikely(err))
 			goto link_failure;
 	}
 
 	if (nhlfe->net)
 		rcv_net = nhlfe->net;
+
+	if (unlikely(set_ttl))
+		set_mpls_ttl(skb, MPLSCB(skb)->hdr.ttl);
 
 	/* dst_release checks if orig_dst != NULL */
 	dst_release(orig_dst);

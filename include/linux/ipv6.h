@@ -99,7 +99,6 @@ struct inet6_skb_parm {
 #define IP6SKB_XFRM_TRANSFORMED	1
 #define IP6SKB_FORWARDED	2
 #define IP6SKB_REROUTED		4
-#define IP6SKB_MPLS_TUNNEL	8
 };
 
 #define IP6CB(skb)	((struct inet6_skb_parm*)((skb)->cb))

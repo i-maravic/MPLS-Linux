@@ -47,21 +47,22 @@ static inline int mpls_is_valid_label(u32 label)
 
 #define MAX_HDR_ARRAY_SIZE (10 * MPLS_HDR_LEN)
 
-struct mpls_hdr_payload {
-	u8 data[MAX_HDR_ARRAY_SIZE]; /* data must be first */
-	__be32 daddr[4];
-	const struct nhlfe *nhlfe;
-	struct net_device *dev;
-	u8 data_len;
-};
-
 #define __dscp_to_tc(_tos) ((_tos) >> 5)
 #define __tc_to_dscp(_tc) ((_tc) << 5)
 
 struct dst_entry *nhlfe_get_nexthop_dst(const struct nhlfe *nhlfe, struct net *net, struct sk_buff *skb);
-bool __push_mpls_hdr_payload(struct sk_buff *skb, const struct mpls_hdr_payload *payload);
-int strip_mpls_headers(struct sk_buff *skb, struct mpls_hdr_payload *payload);
-int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4, void *extra);
+bool __push_mpls_hdr_payload(struct sk_buff *skb);
+int strip_mpls_headers(struct sk_buff *skb);
+int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4);
 int nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb);
+
+#define nf_mpls_nhlfe(nf_mpls)								\
+	(*((struct nhlfe const **)(nf_mpls)->data))
+
+#define nf_mpls_dev(nf_mpls)								\
+	(*((struct net_device **)((char *)(nf_mpls)->data + sizeof(void **))))
+
+#define nf_mpls_hdr_stack(nf_mpls)					\
+	((struct mpls_hdr *)((char *)(nf_mpls)->data + 2 * sizeof(void **)))
 
 #endif /* __NET_MPLS_MPLS_CMD_H__ */
