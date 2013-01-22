@@ -1372,9 +1372,6 @@ int ip6_route_add(struct fib6_config *cfg)
 	struct net_device *dev = NULL;
 	struct inet6_dev *idev = NULL;
 	struct fib6_table *table;
-#if IS_ENABLED(CONFIG_MPLS)
-	struct nhlfe *nhlfe = NULL;
-#endif
 	int addr_type;
 
 	if (cfg->fc_dst_len > 128 || cfg->fc_src_len > 128)
@@ -1514,18 +1511,17 @@ int ip6_route_add(struct fib6_config *cfg)
 			struct net_device *mpls_dev = mpls_get_master_dev(net);
 
 			if (unlikely(!mpls_dev || !dev ||
-					dev->ifindex != mpls_dev->ifindex)) {
+				    dev->ifindex != mpls_dev->ifindex)) {
 				err = -EINVAL;
 				goto out;
 			}
 
-			nhlfe = nhlfe_build(net, cfg->fc_nhlfe, mpls_policy);
-			if (IS_ERR(nhlfe)) {
-				err = PTR_ERR(nhlfe);
-				goto out;
-			}
-
-			rcu_assign_pointer(rt->dst.nhlfe, nhlfe_hold(nhlfe));
+			/*
+			 * nhlfe_hold is needed here because we're decrementing
+			 * nhlfe refcnt, when we deallocate dst_entry
+			 */
+			rcu_assign_pointer(rt->dst.nhlfe, nhlfe_hold(cfg->fc_nhlfe));
+			cfg->fc_nhlfe = NULL;
 		}
 	}
 #endif
@@ -1634,11 +1630,12 @@ out:
 		dev_put(dev);
 	if (idev)
 		in6_dev_put(idev);
-	if (rt)
-		dst_free(&rt->dst);
+	if (rt) {
 #if IS_ENABLED(CONFIG_MPLS)
-	nhlfe_free(nhlfe);
+		nhlfe_free(rt->dst.nhlfe);
 #endif
+		dst_free(&rt->dst);
+	}
 	return err;
 }
 
@@ -1676,9 +1673,6 @@ static int ip6_route_del(struct fib6_config *cfg)
 	struct fib6_table *table;
 	struct fib6_node *fn;
 	struct rt6_info *rt;
-#if IS_ENABLED(CONFIG_MPLS)
-	struct nhlfe *nhlfe = NULL;
-#endif
 	int err = -ESRCH;
 
 	table = fib6_get_table(cfg->fc_nlinfo.nl_net, cfg->fc_table);
@@ -1686,15 +1680,8 @@ static int ip6_route_del(struct fib6_config *cfg)
 		return err;
 
 #if IS_ENABLED(CONFIG_MPLS)
-	if (cfg->fc_flags & RTF_MPLS) {
-		if (cfg->fc_flags & RTF_GATEWAY)
-			return -EINVAL;
-		else {
-			nhlfe = nhlfe_build(cfg->fc_nlinfo.nl_net, cfg->fc_nhlfe, mpls_policy);
-			if (IS_ERR(nhlfe))
-				return PTR_ERR(nhlfe);
-		}
-	}
+	if ((cfg->fc_flags & (RTF_MPLS | RTF_GATEWAY)) == (RTF_MPLS | RTF_GATEWAY))
+		return -EINVAL;
 #endif
 
 	read_lock_bh(&table->tb6_lock);
@@ -1719,23 +1706,17 @@ static int ip6_route_del(struct fib6_config *cfg)
 #if IS_ENABLED(CONFIG_MPLS)
 			if (cfg->fc_flags & RTF_MPLS) {
 				if (!rt->dst.nhlfe || !ipv6_addr_any(&rt->rt6i_gateway) ||
-					   !mpls_nhlfe_eq(rt->dst.nhlfe, nhlfe))
+					   !mpls_nhlfe_eq(rt->dst.nhlfe, cfg->fc_nhlfe))
 					continue;
 			}
 #endif
 			dst_hold(&rt->dst);
 			read_unlock_bh(&table->tb6_lock);
-#if IS_ENABLED(CONFIG_MPLS)
-			nhlfe_free(nhlfe);
-#endif
 
 			return __ip6_del_rt(rt, &cfg->fc_nlinfo);
 		}
 	}
 	read_unlock_bh(&table->tb6_lock);
-#if IS_ENABLED(CONFIG_MPLS)
-	nhlfe_free(nhlfe);
-#endif
 
 	return err;
 }
@@ -2417,7 +2398,12 @@ static int rtm_to_fib6_config(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (tb[RTA_MPLS])
 #if IS_ENABLED(CONFIG_MPLS)
 	{
-		cfg->fc_nhlfe = tb[RTA_MPLS];
+		cfg->fc_nhlfe = nhlfe_build(sock_net(skb->sk), tb[RTA_MPLS], mpls_policy);
+		if (IS_ERR(cfg->fc_nhlfe)) {
+			err = PTR_ERR(cfg->fc_nhlfe);
+			cfg->fc_nhlfe = NULL;
+			goto errout;
+		}
 		cfg->fc_flags |= RTF_MPLS;
 	}
 #else
@@ -2436,9 +2422,14 @@ static int inet6_rtm_delroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *a
 
 	err = rtm_to_fib6_config(skb, nlh, &cfg);
 	if (err < 0)
-		return err;
+		goto err;
 
-	return ip6_route_del(&cfg);
+	err = ip6_route_del(&cfg);
+err:
+#if IS_ENABLED(CONFIG_MPLS)
+	nhlfe_free(cfg.fc_nhlfe);
+#endif
+	return err;
 }
 
 static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
@@ -2448,9 +2439,14 @@ static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *a
 
 	err = rtm_to_fib6_config(skb, nlh, &cfg);
 	if (err < 0)
-		return err;
+		goto err;
 
-	return ip6_route_add(&cfg);
+	err = ip6_route_add(&cfg);
+err:
+#if IS_ENABLED(CONFIG_MPLS)
+	nhlfe_free(cfg.fc_nhlfe);
+#endif
+	return err;
 }
 
 static inline size_t rt6_nlmsg_size(void)
@@ -2464,6 +2460,7 @@ static inline size_t rt6_nlmsg_size(void)
 	       + nla_total_size(4) /* RTA_IIF */
 	       + nla_total_size(4) /* RTA_OIF */
 	       + nla_total_size(4) /* RTA_PRIORITY */
+	       + mpls_nla_size()   /* RTA_MPLS */
 	       + RTAX_MAX * nla_total_size(4) /* RTA_METRICS */
 	       + nla_total_size(sizeof(struct rta_cacheinfo));
 }

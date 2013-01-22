@@ -43,7 +43,7 @@ struct fib_config {
 	struct nlattr		*fc_mx;
 	struct rtnexthop	*fc_mp;
 #if IS_ENABLED(CONFIG_MPLS)
-	struct nlattr		*fc_nhlfe;
+	struct nhlfe		*fc_nhlfe;
 #endif
 	int			fc_mx_len;
 	int			fc_mp_len;

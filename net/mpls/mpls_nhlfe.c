@@ -593,10 +593,16 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 		switch (addr->sa_family) {
 		case AF_INET:
 			nhlfe->nh.ipv4 = ((struct sockaddr_in *)addr)->sin_addr;
+			if (nhlfe->nh.ipv4.s_addr == 0)
+				goto err;
 			break;
 #if IS_ENABLED(CONFIG_IPV6)
 		case AF_INET6:
+			if (nla_len(tb[MPLSA_NEXTHOP_ADDR]) < sizeof(struct sockaddr_in6))
+				goto err;
 			nhlfe->nh.ipv6 = ((struct sockaddr_in6 *)addr)->sin6_addr;
+			if (ipv6_addr_any(&nhlfe->nh.ipv6))
+				goto err;
 			break;
 #endif
 		default:
@@ -1115,7 +1121,11 @@ int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	}
 
 	if (nhlfe->flags & MPLS_HAS_NH) {
-		struct sockaddr addr = { };
+		/*
+		 * sizeof sockaddr_in6 is larger then
+		 * sizeof sockaddr. Hence use struct sockaddr_in6 as buffer.
+		 */
+		struct sockaddr_in6 addr = { };
 
 		if (nhlfe->flags & MPLS_NH_GLOBAL) {
 			err = nla_put_flag(skb, MPLSA_NEXTHOP_GLOBAL);
@@ -1138,7 +1148,7 @@ int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb)
 				goto out;
 		}
 
-		addr.sa_family = nhlfe->family;
+		addr.sin6_family = nhlfe->family;
 		if (nhlfe->family == AF_INET)
 			((struct sockaddr_in *)&addr)->sin_addr = nhlfe->nh.ipv4;
 #if IS_ENABLED(CONFIG_IPV6)

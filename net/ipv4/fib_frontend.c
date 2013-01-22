@@ -603,7 +603,13 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 			break;
 		case RTA_MPLS:
 #if IS_ENABLED(CONFIG_MPLS)
-			cfg->fc_nhlfe = attr;
+			cfg->fc_nhlfe = nhlfe_build(net, attr, mpls_policy);
+
+			if (IS_ERR(cfg->fc_nhlfe)) {
+				err = PTR_ERR(cfg->fc_nhlfe);
+				cfg->fc_nhlfe = NULL;
+				goto errout;
+			};
 #else
 			err = -EINVAL;
 			goto errout;
@@ -636,6 +642,9 @@ static int inet_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *ar
 
 	err = fib_table_delete(tb, &cfg);
 errout:
+#if IS_ENABLED(CONFIG_MPLS)
+	nhlfe_free(cfg.fc_nhlfe);
+#endif
 	return err;
 }
 
@@ -658,6 +667,9 @@ static int inet_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *ar
 
 	err = fib_table_insert(tb, &cfg);
 errout:
+#if IS_ENABLED(CONFIG_MPLS)
+	nhlfe_free(cfg.fc_nhlfe);
+#endif
 	return err;
 }
 

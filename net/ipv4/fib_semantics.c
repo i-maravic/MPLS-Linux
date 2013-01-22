@@ -371,7 +371,8 @@ static inline size_t fib_nlmsg_size(struct fib_info *fi)
 			 + nla_total_size(4) /* RTA_TABLE */
 			 + nla_total_size(4) /* RTA_DST */
 			 + nla_total_size(4) /* RTA_PRIORITY */
-			 + nla_total_size(4); /* RTA_PREFSRC */
+			 + nla_total_size(4) /* RTA_PREFSRC */
+			 + mpls_nla_size();   /* RTA_MPLS */
 
 	/* space for nested metrics */
 	payload += nla_total_size((RTAX_MAX * nla_total_size(4)));
@@ -382,8 +383,8 @@ static inline size_t fib_nlmsg_size(struct fib_info *fi)
 		/* each nexthop is packed in an attribute */
 		size_t nhsize = nla_total_size(sizeof(struct rtnexthop));
 
-		/* may contain flow and gateway attribute */
-		nhsize += 2 * nla_total_size(4);
+		/* may contain flow, gateway and mpls attribute */
+		nhsize += 2 * nla_total_size(4) + mpls_nla_size();
 
 		/* all nexthops are packed in a nested attribute */
 		payload += nla_total_size(fi->fib_nhs * nhsize);
@@ -544,22 +545,9 @@ int fib_nh_match(struct fib_config *cfg, struct fib_info *fi)
 
 #if IS_ENABLED(CONFIG_MPLS)
 	if (cfg->fc_nhlfe) {
-		if (!fi->fib_nh->nhlfe || fi->fib_nh->nh_gw || cfg->fc_gw)
+		if (!fi->fib_nh->nhlfe || fi->fib_nh->nh_gw || cfg->fc_gw ||
+			    !mpls_nhlfe_eq(fi->fib_nh->nhlfe, cfg->fc_nhlfe))
 			return 1;
-		else {
-			struct nhlfe *nhlfe;
-			bool ret;
-
-			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe, mpls_policy);
-			if (IS_ERR(nhlfe))
-				return 1;
-
-			ret = !mpls_nhlfe_eq(fi->fib_nh->nhlfe, nhlfe);
-			nhlfe_free(nhlfe);
-
-			if (ret)
-				return 1;
-		}
 	}
 #endif
 
@@ -965,21 +953,14 @@ struct fib_info *fib_create_info(struct fib_config *cfg)
 #if IS_ENABLED(CONFIG_MPLS)
 		if (cfg->fc_nhlfe) {
 			struct net_device *mpls_dev = mpls_get_master_dev(net);
-			struct nhlfe *nhlfe;
 
 			if (unlikely(!mpls_dev ||
-				nh->nh_oif != mpls_dev->ifindex ||
-				nh->nh_gw != 0))
+				    nh->nh_oif != mpls_dev->ifindex ||
+				    nh->nh_gw != 0))
 				goto err_inval;
 
-			nhlfe = nhlfe_build(fi->fib_net, cfg->fc_nhlfe, mpls_policy);
-
-			if (IS_ERR(nhlfe)) {
-				err = PTR_ERR(nhlfe);
-				goto failure;
-			}
-
-			rcu_assign_pointer(nh->nhlfe, nhlfe);
+			rcu_assign_pointer(nh->nhlfe, cfg->fc_nhlfe);
+			cfg->fc_nhlfe = NULL;
 		}
 #endif
 #ifdef CONFIG_IP_ROUTE_CLASSID

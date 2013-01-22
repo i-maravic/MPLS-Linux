@@ -368,19 +368,7 @@ mpls_tunnel_setup(struct net_device *dev)
 static size_t
 mpls_get_size(const struct net_device *dev)
 {
-	return	nla_total_size(1) +		/* MPLSA_POP */
-		nla_total_size(1) +		/* MPLSA_DSCP */
-		nla_total_size(2) +		/* MPLSA_TC_INDEX */
-		nla_total_size(MPLS_HDR_LEN) +	/* MPLSA_SWAP */
-		10*nla_total_size(MPLS_HDR_LEN) +	/* MPLSA_PUSH */
-		nla_total_size(4) +		/* MPLSA_NEXTHOP_OIF */
-		/* MPLSA_NEXTHOP_ADDR */
-#if IS_ENABLED(CONFIG_IPV6)
-		nla_total_size(sizeof(struct sockaddr_in6))
-#else
-		nla_total_size(sizeof(struct sockaddr_in))
-#endif
-		;
+	return mpls_nla_size();
 }
 
 static int
