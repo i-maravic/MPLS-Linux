@@ -139,9 +139,8 @@ struct nhlfe {
 	 */
 	union {
 		struct rcu_head rcu;
-		struct hlist_node portal; /* For netns accounting */
+		atomic_t refcnt;
 	};
-	atomic_t refcnt;
 #define NHLFE_CMPR_START(ptr) ((char *)(&((struct nhlfe *)ptr)->dead))
 	u8 dead;
 	/* NHLFE data */
@@ -160,11 +159,6 @@ struct nhlfe {
 		struct in6_addr ipv6;
 	} nh;
 	/* net info */
-	struct {
-		u32 label;
-		u8 tc;
-		u8 __pad[3];
-	} net_key;
 	struct net *net;
 	u16 tc_index;
 	/*
@@ -226,7 +220,6 @@ struct ilm_hash {
 /* Per-net hash tables */
 struct ilm_net {
 	struct ilm_hash h;
-	struct hlist_head portal;
 	u32 pid;
 	char name[MPLS_NETNS_NAME_MAX];
 };

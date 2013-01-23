@@ -454,10 +454,8 @@ void __nhlfe_free_rcu(struct nhlfe *nhlfe)
 	WARN_ON(nhlfe->dead);
 	nhlfe->dead = 1;
 
-	if (nhlfe->net) {
-		hlist_del_rcu(&nhlfe->portal);
+	if (nhlfe->net)
 		release_net(nhlfe->net);
-	}
 
 	if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
 		kfree_rcu(nhlfe, rcu);
@@ -471,10 +469,8 @@ void __nhlfe_free(struct nhlfe *nhlfe)
 	WARN_ON(nhlfe->dead);
 	nhlfe->dead = 1;
 
-	if (nhlfe->net) {
-		hlist_del_rcu(&nhlfe->portal);
+	if (nhlfe->net)
 		release_net(nhlfe->net);
-	}
 
 	if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
 		kfree(nhlfe);
@@ -643,7 +639,6 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 		if (net_eq(&init_net, nhlfe->net))
 			goto err;
 
-		hlist_add_head_rcu(&nhlfe->portal, &ilmn->portal);
 		hold_net(nhlfe->net);
 	}
 
