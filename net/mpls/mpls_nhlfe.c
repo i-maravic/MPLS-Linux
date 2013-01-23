@@ -485,6 +485,7 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	struct ilm_net *ilmn = NULL;
 	struct nlattr *data[MPLS_ATTR_MAX + 1];
 	int num_push = 0, has_swap = 0;
+	const struct net_device *dev = NULL;
 	struct mpls_hdr *hdrs;
 	int error;
 
@@ -613,7 +614,6 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	}
 
 	if (tb[MPLSA_NEXTHOP_IFNAME]) {
-		struct net_device *dev;
 		if (!(nhlfe->flags & MPLS_NH_GLOBAL) || !(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
 		dev = dev_get_by_name_rcu(&init_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
@@ -627,7 +627,23 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	if (tb[MPLSA_NEXTHOP_OIF]) {
 		if (nhlfe->ifindex || !(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
+		dev = dev_get_by_index_rcu(net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
+		if (!dev) {
+			error = -ENODEV;
+			goto err;
+		}
 		nhlfe->ifindex = nla_get_u32(tb[MPLSA_NEXTHOP_OIF]);
+	}
+
+	if (dev) {
+		if (!(dev->flags & IFF_UP)) {
+			error = -ENETDOWN;
+			goto err;
+		}
+		if (!(dev->flags & IFF_MPLS)) {
+			error = -EPFNOSUPPORT;
+			goto err;
+		}
 	}
 
 	/* Sanity check */
