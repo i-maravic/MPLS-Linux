@@ -57,6 +57,9 @@ static unsigned int fib_info_cnt;
 #define DEVINDEX_HASHBITS 8
 #define DEVINDEX_HASHSIZE (1U << DEVINDEX_HASHBITS)
 static struct hlist_head fib_info_devhash[DEVINDEX_HASHSIZE];
+#if IS_ENABLED(CONFIG_MPLS)
+static struct hlist_head fib_info_mpls_devhash[DEVINDEX_HASHSIZE];
+#endif
 
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 
@@ -249,9 +252,12 @@ void fib_release_info(struct fib_info *fi)
 		if (fi->fib_prefsrc)
 			hlist_del(&fi->fib_lhash);
 		change_nexthops(fi) {
-			if (!nexthop_nh->nh_dev)
-				continue;
-			hlist_del(&nexthop_nh->nh_hash);
+			if (nexthop_nh->nh_dev)
+				hlist_del(&nexthop_nh->nh_hash);
+#if IS_ENABLED(CONFIG_MPLS)
+			if (nexthop_nh->nhlfe && nexthop_nh->nhlfe->dev)
+				hlist_del(&nexthop_nh->nhlfe_hash);
+#endif
 		} endfor_nexthops(fi)
 		fi->fib_dead = 1;
 		fib_info_put(fi);
@@ -1047,11 +1053,18 @@ link_it:
 		struct hlist_head *head;
 		unsigned int hash;
 
-		if (!nexthop_nh->nh_dev)
-			continue;
-		hash = fib_devindex_hashfn(nexthop_nh->nh_dev->ifindex);
-		head = &fib_info_devhash[hash];
-		hlist_add_head(&nexthop_nh->nh_hash, head);
+		if (nexthop_nh->nh_dev) {
+			hash = fib_devindex_hashfn(nexthop_nh->nh_dev->ifindex);
+			head = &fib_info_devhash[hash];
+			hlist_add_head(&nexthop_nh->nh_hash, head);
+		}
+#if IS_ENABLED(CONFIG_MPLS)
+		if (nexthop_nh->nhlfe && nexthop_nh->nhlfe->dev) {
+			hash = fib_devindex_hashfn(nexthop_nh->nhlfe->dev->ifindex);
+			head = &fib_info_mpls_devhash[hash];
+			hlist_add_head(&nexthop_nh->nhlfe_hash, head);
+		}
+#endif
 	} endfor_nexthops(fi)
 	spin_unlock_bh(&fib_info_lock);
 	return fi;
@@ -1216,7 +1229,7 @@ int fib_sync_down_addr(struct net *net, __be32 local)
 	return ret;
 }
 
-int fib_sync_down_dev(struct net_device *dev, int force)
+int fib_sync_down_dev(struct net_device *dev, int force, bool mpls_only)
 {
 	int ret = 0;
 	int scope = RT_SCOPE_NOWHERE;
@@ -1228,6 +1241,9 @@ int fib_sync_down_dev(struct net_device *dev, int force)
 
 	if (force)
 		scope = -1;
+
+	if (mpls_only)
+		goto do_mpls;
 
 	hlist_for_each_entry(nh, node, head, nh_hash) {
 		struct fib_info *fi = nh->nh_parent;
@@ -1264,6 +1280,49 @@ int fib_sync_down_dev(struct net_device *dev, int force)
 			ret++;
 		}
 	}
+do_mpls:
+#if IS_ENABLED(CONFIG_MPLS)
+	/* Now do it for MPLS routes */
+	head = &fib_info_mpls_devhash[hash];
+	hlist_for_each_entry(nh, node, head, nhlfe_hash) {
+		struct fib_info *fi = nh->nh_parent;
+		int dead;
+
+		BUG_ON(!fi->fib_nhs);
+		if (!nh->nhlfe || nh->nhlfe->dev != dev ||
+			    fi == prev_fi)
+			continue;
+		prev_fi = fi;
+		dead = 0;
+		change_nexthops(fi) {
+			if (nexthop_nh->nh_flags & RTNH_F_DEAD)
+				dead++;
+			else if (nexthop_nh->nhlfe &&
+				 nexthop_nh->nhlfe->dev == dev &&
+				 nexthop_nh->nh_scope != scope) {
+				nexthop_nh->nh_flags |= RTNH_F_DEAD;
+#ifdef CONFIG_IP_ROUTE_MULTIPATH
+				spin_lock_bh(&fib_multipath_lock);
+				fi->fib_power -= nexthop_nh->nh_power;
+				nexthop_nh->nh_power = 0;
+				spin_unlock_bh(&fib_multipath_lock);
+#endif
+				dead++;
+			}
+#ifdef CONFIG_IP_ROUTE_MULTIPATH
+			if (force > 1 && nexthop_nh->nhlfe &&
+				    nexthop_nh->nhlfe->dev == dev) {
+				dead = fi->fib_nhs;
+				break;
+			}
+#endif
+		} endfor_nexthops(fi)
+		if (dead == fi->fib_nhs) {
+			fi->fib_flags |= RTNH_F_DEAD;
+			ret++;
+		}
+	}
+#endif
 
 	return ret;
 }
@@ -1330,7 +1389,7 @@ out:
  * Dead device goes up. We wake up dead nexthops.
  * It takes sense only on multipath routes.
  */
-int fib_sync_up(struct net_device *dev)
+int fib_sync_up(struct net_device *dev, bool mpls_only)
 {
 	struct fib_info *prev_fi;
 	unsigned int hash;
@@ -1346,6 +1405,9 @@ int fib_sync_up(struct net_device *dev)
 	hash = fib_devindex_hashfn(dev->ifindex);
 	head = &fib_info_devhash[hash];
 	ret = 0;
+
+	if (mpls_only)
+		goto do_mpls;
 
 	hlist_for_each_entry(nh, node, head, nh_hash) {
 		struct fib_info *fi = nh->nh_parent;
@@ -1380,6 +1442,45 @@ int fib_sync_up(struct net_device *dev)
 			ret++;
 		}
 	}
+do_mpls:
+#if IS_ENABLED(CONFIG_MPLS)
+	/* Now do it for MPLS routes */
+	head = &fib_info_mpls_devhash[hash];
+	hlist_for_each_entry(nh, node, head, nhlfe_hash) {
+		struct fib_info *fi = nh->nh_parent;
+		int alive;
+
+		BUG_ON(!fi->fib_nhs);
+		if (!nh->nhlfe || nh->nhlfe->dev != dev ||
+			    fi == prev_fi)
+			continue;
+
+		prev_fi = fi;
+		alive = 0;
+		change_nexthops(fi) {
+			if (!(nexthop_nh->nh_flags & RTNH_F_DEAD)) {
+				alive++;
+				continue;
+			}
+			if (!nh->nhlfe ||
+			    !nh->nhlfe->dev ||
+			    nh->nhlfe->dev != dev ||
+			    ((nexthop_nh->nhlfe->dev->flags & (IFF_UP | IFF_MPLS)) != (IFF_UP | IFF_MPLS)) ||
+			    !__in_dev_get_rtnl(dev))
+				continue;
+			alive++;
+			spin_lock_bh(&fib_multipath_lock);
+			nexthop_nh->nh_power = 0;
+			nexthop_nh->nh_flags &= ~RTNH_F_DEAD;
+			spin_unlock_bh(&fib_multipath_lock);
+		} endfor_nexthops(fi)
+
+		if (alive > 0) {
+			fi->fib_flags &= ~RTNH_F_DEAD;
+			ret++;
+		}
+	}
+#endif
 
 	return ret;
 }

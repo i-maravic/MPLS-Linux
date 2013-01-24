@@ -1023,12 +1023,13 @@ static void nl_fib_lookup_exit(struct net *net)
 	net->ipv4.fibnl = NULL;
 }
 
-static void fib_disable_ip(struct net_device *dev, int force)
+static void fib_disable_ip(struct net_device *dev, int force, bool mpls_only)
 {
-	if (fib_sync_down_dev(dev, force))
+	if (fib_sync_down_dev(dev, force, mpls_only))
 		fib_flush(dev_net(dev));
 	rt_cache_flush(dev_net(dev));
-	arp_ifdown(dev);
+	if (mpls_only)
+		arp_ifdown(dev);
 }
 
 static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, void *ptr)
@@ -1041,7 +1042,7 @@ static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, 
 	case NETDEV_UP:
 		fib_add_ifaddr(ifa);
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
-		fib_sync_up(dev);
+		fib_sync_up(dev, false);
 #endif
 		atomic_inc(&net->ipv4.dev_addr_genid);
 		rt_cache_flush(dev_net(dev));
@@ -1053,7 +1054,7 @@ static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, 
 			/* Last address was deleted from this interface.
 			 * Disable IP.
 			 */
-			fib_disable_ip(dev, 1);
+			fib_disable_ip(dev, 1, false);
 		} else {
 			rt_cache_flush(dev_net(dev));
 		}
@@ -1069,7 +1070,7 @@ static int fib_netdev_event(struct notifier_block *this, unsigned long event, vo
 	struct net *net = dev_net(dev);
 
 	if (event == NETDEV_UNREGISTER) {
-		fib_disable_ip(dev, 2);
+		fib_disable_ip(dev, 2, false);
 		rt_flush_dev(dev);
 		return NOTIFY_DONE;
 	}
@@ -1082,18 +1083,29 @@ static int fib_netdev_event(struct notifier_block *this, unsigned long event, vo
 			fib_add_ifaddr(ifa);
 		} endfor_ifa(in_dev);
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
-		fib_sync_up(dev);
+		fib_sync_up(dev, false);
 #endif
 		atomic_inc(&net->ipv4.dev_addr_genid);
 		rt_cache_flush(net);
 		break;
 	case NETDEV_DOWN:
-		fib_disable_ip(dev, 0);
+		fib_disable_ip(dev, 0, false);
 		break;
 	case NETDEV_CHANGEMTU:
 	case NETDEV_CHANGE:
 		rt_cache_flush(net);
 		break;
+#if IS_ENABLED(CONFIG_MPLS)
+	case NETDEV_CHANGEMPLS:
+		if (dev->flags & IFF_MPLS) {
+#ifdef CONFIG_IP_ROUTE_MULTIPATH
+			fib_sync_up(dev, true);
+			rt_cache_flush(net);
+#endif
+		} else
+			fib_disable_ip(dev, 0, true);
+		break;
+#endif
 	}
 	return NOTIFY_DONE;
 }

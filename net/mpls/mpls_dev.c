@@ -252,7 +252,7 @@ mpls_tunnel_bind_dev(struct net_device *dev, struct net_device **tdev_ptr)
 	nhlfe = rcu_dereference_rtnl(tunnel->nhlfe);
 	addend = nhlfe->num_push * MPLS_HDR_LEN;
 
-	link = nhlfe->ifindex;
+	link = nhlfe->dev ? nhlfe->dev->ifindex : 0;
 	net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(dev);
 	dst = nhlfe_get_nexthop_dst(nhlfe, net, NULL);
 	if (!IS_ERR(dst)) {
@@ -261,7 +261,7 @@ mpls_tunnel_bind_dev(struct net_device *dev, struct net_device **tdev_ptr)
 	}
 
 	if (!(*tdev_ptr) && link)
-		*tdev_ptr = __dev_get_by_index(net, link);
+		*tdev_ptr = nhlfe->dev;
 
 	if (*tdev_ptr) {
 		hlen = (*tdev_ptr)->hard_header_len + (*tdev_ptr)->needed_headroom;
@@ -438,7 +438,7 @@ static void mpls_dev_sync_dev_down(const struct net *net, struct net_device *dev
 			struct mpls_tunnel *t = netdev_priv(mpls_dev);
 			struct nhlfe *nhlfe = rtnl_dereference(t->nhlfe);
 
-			if (nhlfe && nhlfe->ifindex == dev->ifindex)
+			if (nhlfe && nhlfe->dev == dev)
 				unregister_netdevice(mpls_dev);
 		}
 	}
@@ -483,7 +483,7 @@ static int mpls_dev_netdev_change_mtu(const struct net *net, struct net_device *
 			struct mpls_tunnel *t = netdev_priv(mpls_dev);
 			struct nhlfe *nhlfe = rtnl_dereference(t->nhlfe);
 
-			if (nhlfe && nhlfe->ifindex == dev->ifindex) {
+			if (nhlfe && nhlfe->dev == dev) {
 				err = dev_set_mtu(mpls_dev, dev->mtu);
 				if (unlikely(err))
 					return err;

@@ -76,6 +76,9 @@ struct fnhe_hash_bucket {
 struct fib_nh {
 	struct net_device	*nh_dev;
 	struct hlist_node	nh_hash;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct hlist_node	nhlfe_hash;
+#endif
 	struct fib_info		*nh_parent;
 	unsigned int		nh_flags;
 	unsigned char		nh_scope;
@@ -299,10 +302,10 @@ static inline int fib_num_tclassid_users(struct net *net)
 
 /* Exported by fib_semantics.c */
 extern int ip_fib_check_default(__be32 gw, struct net_device *dev);
-extern int fib_sync_down_dev(struct net_device *dev, int force);
+extern int fib_sync_down_dev(struct net_device *dev, int force, bool mpls_only);
 extern int fib_sync_down_addr(struct net *net, __be32 local);
 extern void fib_update_nh_saddrs(struct net_device *dev);
-extern int fib_sync_up(struct net_device *dev);
+extern int fib_sync_up(struct net_device *dev, bool mpls_only);
 extern void fib_select_multipath(struct fib_result *res);
 
 /* Exported by fib_trie.c */

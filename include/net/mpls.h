@@ -153,7 +153,7 @@ struct nhlfe {
 	u8 dscp;
 	/* nexthop info */
 	u16 family;
-	u32 ifindex;
+	struct net_device *dev;
 	union {
 		struct in_addr ipv4;
 		struct in6_addr ipv6;

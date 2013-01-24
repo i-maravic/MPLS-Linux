@@ -540,7 +540,7 @@ bucket_restart:
 
 		for (j = 0; j < n->pos; j++) {
 			ilm = __hash_data_rtnl(n, j);
-			if (rtnl_dereference(ilm->nhlfe)->ifindex == dev->ifindex) {
+			if (rtnl_dereference(ilm->nhlfe)->dev == dev) {
 				__ilm_del(&ilmn->h, n, j, ilm);
 				goto bucket_restart;
 			}

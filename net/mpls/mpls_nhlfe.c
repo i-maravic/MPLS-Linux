@@ -217,7 +217,7 @@ struct dst_entry *nhlfe_get_dst_ipv4(const struct nhlfe *nhlfe,
 {
 	struct dst_entry *dst;
 	struct flowi4 fl4 = {
-		.flowi4_oif = nhlfe->ifindex,
+		.flowi4_oif = nhlfe->dev ? nhlfe->dev->ifindex : 0,
 		.daddr = nhlfe->nh.ipv4.s_addr,
 		.flowi4_flags = FLOWI_FLAG_MPLS,
 	};
@@ -246,7 +246,7 @@ struct dst_entry *nhlfe_get_dst_ipv6(const struct nhlfe *nhlfe,
 {
 	struct dst_entry *dst;
 	struct flowi6 fl6 = {
-		.flowi6_oif = nhlfe->ifindex,
+		.flowi6_oif = nhlfe->dev ? nhlfe->dev->ifindex : 0,
 		.daddr = nhlfe->nh.ipv6,
 		.flowi6_flags = FLOWI_FLAG_MPLS,
 	};
@@ -457,6 +457,9 @@ void __nhlfe_free_rcu(struct nhlfe *nhlfe)
 	if (nhlfe->net)
 		release_net(nhlfe->net);
 
+	if (nhlfe->dev)
+		dev_put(nhlfe->dev);
+
 	if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
 		kfree_rcu(nhlfe, rcu);
 }
@@ -472,6 +475,9 @@ void __nhlfe_free(struct nhlfe *nhlfe)
 	if (nhlfe->net)
 		release_net(nhlfe->net);
 
+	if (nhlfe->dev)
+		dev_put(nhlfe->dev);
+
 	if (likely(atomic_dec_and_test(&nhlfe->refcnt)))
 		kfree(nhlfe);
 	else
@@ -485,7 +491,6 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	struct ilm_net *ilmn = NULL;
 	struct nlattr *data[MPLS_ATTR_MAX + 1];
 	int num_push = 0, has_swap = 0;
-	const struct net_device *dev = NULL;
 	struct mpls_hdr *hdrs;
 	int error;
 
@@ -557,6 +562,9 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 		}
 
 		put_net(nhlfe->net);
+
+		if (net_eq(&init_net, nhlfe->net))
+			goto err;
 	}
 
 	if (tb[MPLSA_NETNS_PID]) {
@@ -574,6 +582,9 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 		ilmn->pid = nla_get_u32(tb[MPLSA_NETNS_PID]);
 
 		put_net(nhlfe->net);
+
+		if (net_eq(&init_net, nhlfe->net))
+			goto err;
 	}
 
 	if (tb[MPLSA_NEXTHOP_ADDR]) {
@@ -616,48 +627,50 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	if (tb[MPLSA_NEXTHOP_IFNAME]) {
 		if (!(nhlfe->flags & MPLS_NH_GLOBAL) || !(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
-		dev = dev_get_by_name_rcu(&init_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
-		if (!dev) {
+		nhlfe->dev = dev_get_by_name_rcu(&init_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
+		if (!nhlfe->dev) {
 			error = -ENODEV;
 			goto err;
 		}
-		nhlfe->ifindex = dev->ifindex;
 	}
 
 	if (tb[MPLSA_NEXTHOP_OIF]) {
-		if (nhlfe->ifindex || !(nhlfe->flags & MPLS_HAS_NH) || (nhlfe->flags & MPLS_NH_GLOBAL))
+		if (nhlfe->dev || !(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
-		/* Cast away const from net */
-		dev = dev_get_by_index_rcu((struct net *)net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
-		if (!dev) {
+
+		if (nhlfe->flags & MPLS_NH_GLOBAL) {
 			error = -ENODEV;
 			goto err;
 		}
-		nhlfe->ifindex = nla_get_u32(tb[MPLSA_NEXTHOP_OIF]);
+
+		/* Cast away const from net */
+		nhlfe->dev = dev_get_by_index_rcu((struct net *)net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
+		if (!nhlfe->dev) {
+			error = -ENODEV;
+			goto err;
+		}
 	}
 
-	if (dev) {
-		if (!(dev->flags & IFF_UP)) {
-			error = -ENETDOWN;
-			goto err;
-		}
-		if (!(dev->flags & IFF_MPLS)) {
-			error = -EPFNOSUPPORT;
-			goto err;
-		}
-	}
 
 	/* Sanity check */
 	if (!(nhlfe->flags & MPLS_HAS_NH) &&
 		   (nhlfe->num_push || nhlfe->has_swap || !nhlfe->num_pop))
 		goto err;
 
-	if (nhlfe->net) {
-		if (net_eq(&init_net, nhlfe->net))
+	if (nhlfe->dev) {
+		if (!(nhlfe->dev->flags & IFF_UP)) {
+			error = -ENETDOWN;
 			goto err;
-
-		hold_net(nhlfe->net);
+		}
+		if (!(nhlfe->dev->flags & IFF_MPLS)) {
+			error = -EPFNOSUPPORT;
+			goto err;
+		}
+		dev_hold(nhlfe->dev);
 	}
+
+	if (nhlfe->net)
+		hold_net(nhlfe->net);
 
 	return nhlfe;
 err:
@@ -1145,16 +1158,11 @@ int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb)
 				goto out;
 		}
 
-		if (nhlfe->ifindex) {
+		if (nhlfe->dev) {
 			if (nhlfe->flags & MPLS_NH_GLOBAL) {
-				const struct net_device *dev;
-				dev = dev_get_by_index_rcu(&init_net, nhlfe->ifindex);
-				if (likely(dev))
-					err = nla_put_string(skb, MPLSA_NEXTHOP_IFNAME, dev->name);
-				else
-					err = nla_put_string(skb, MPLSA_NEXTHOP_IFNAME, "(null)");
+				err = nla_put_string(skb, MPLSA_NEXTHOP_IFNAME, nhlfe->dev->name);
 			} else
-				err = nla_put_u32(skb, MPLSA_NEXTHOP_OIF, nhlfe->ifindex);
+				err = nla_put_u32(skb, MPLSA_NEXTHOP_OIF, nhlfe->dev->ifindex);
 
 			if (unlikely(err))
 				goto out;
