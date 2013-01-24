@@ -32,6 +32,7 @@
 #include <net/snmp.h>
 #include <net/ip.h>
 #include <net/netns/generic.h>
+#include "mpls_cmd.h"
 
 MODULE_AUTHOR("Igor Maravic <igorm@etf.rs>, James R. Leu <jleu@mindspring.com>, Ramon Casellas <casellas@infres.enst.fr>");
 MODULE_DESCRIPTION("Multi Protocol Label Switching protocol module");
@@ -280,6 +281,10 @@ static struct packet_type mpls_uc_packet_type = {
 	.func = mpls_recv,
 };
 
+static struct notifier_block mpls_netdev_notifier = {
+	.notifier_call = mpls_netdev_event,
+};
+
 static struct mpls_ops __mpls_ops = {
 	.mpls_master_dev = __mpls_master_dev,
 	.nhlfe_build	= __nhlfe_build,
@@ -318,11 +323,17 @@ static int __init mpls_init_module(void)
 	if (unlikely(err))
 		goto cleanup_sysctl;
 
+	err = register_netdevice_notifier(&mpls_ilm_netdev_event);
+	if (unlikely(err))
+		goto cleanup_mibs;
+
 	dev_add_pack(&mpls_uc_packet_type);
 	mpls_ops = &__mpls_ops;
 
 	return 0;
 
+cleanup_mibs:
+	exit_mpls_mibs();
 cleanup_sysctl:
 	mpls_sysctl_exit();
 cleanup_dev:
@@ -336,6 +347,7 @@ err:
 static void __exit mpls_exit_module(void)
 {
 	dev_remove_pack(&mpls_uc_packet_type);
+	unregister_netdevice_notifier(&mpls_netdev_notifier);
 	exit_mpls_mibs();
 	mpls_sysctl_exit();
 	ilm_exit();

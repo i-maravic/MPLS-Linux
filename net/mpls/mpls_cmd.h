@@ -55,6 +55,7 @@ bool __push_mpls_hdr_payload(struct sk_buff *skb);
 int strip_mpls_headers(struct sk_buff *skb);
 int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4);
 int nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb);
+int mpls_ilm_netdev_event(struct notifier_block *this, unsigned long event, void *ptr);
 
 #define nf_mpls_nhlfe(nf_mpls)								\
 	(*((struct nhlfe const **)(nf_mpls)->data))

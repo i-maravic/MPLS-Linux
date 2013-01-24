@@ -627,7 +627,8 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	if (tb[MPLSA_NEXTHOP_OIF]) {
 		if (nhlfe->ifindex || !(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
-		dev = dev_get_by_index_rcu(net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
+		/* Cast away const from net */
+		dev = dev_get_by_index_rcu((struct net *)net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
 		if (!dev) {
 			error = -ENODEV;
 			goto err;

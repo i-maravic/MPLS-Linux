@@ -517,6 +517,83 @@ bucket_restart:
 	}
 }
 
+static void
+ilm_sync_dev_down(const struct net *net, const struct net_device *dev, bool recursive)
+{
+	struct ilm_net *ilmn = net_generic(&init_net, ilm_net_id);
+	struct htable *t;
+	struct hbucket *n;
+	struct ilm *ilm;
+	int i, j;
+
+	/*
+	 * Calling this function is only allowed from init_net,
+	 * and with acquired RTNL lock
+	 */
+	ASSERT_RTNL();
+
+	t = rtnl_dereference(ilmn->h.table);
+
+	for (i = 0; i < jhash_size(t->htable_bits); ++i) {
+bucket_restart:
+		n = hbucket(t, i);
+
+		for (j = 0; j < n->pos; j++) {
+			ilm = __hash_data_rtnl(n, j);
+			if (rtnl_dereference(ilm->nhlfe)->ifindex == dev->ifindex) {
+				__ilm_del(&ilmn->h, n, j, ilm);
+				goto bucket_restart;
+			}
+		}
+	}
+
+	if (recursive) {
+		if (net_eq(&init_net, net)) {
+			const struct net *tmp;
+			for_each_net(tmp) {
+				if (net_eq(tmp, &init_net))
+					continue;
+				ilm_sync_dev_down(tmp, dev, false);
+			}
+		} else
+			ilm_sync_dev_down(&init_net, dev, false);
+	}
+
+}
+
+int mpls_ilm_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
+{
+	struct net_device *dev = ptr;
+
+	switch (event) {
+	case NETDEV_UP:
+		/*
+		 * TODO - Create ilm_sync_up when
+		 * MPLS multipath is implemented.
+		 * Before calling ilm_sync_up we should
+		 * first check if IFF_MPLS flag is set!
+		 */
+		break;
+	case NETDEV_UNREGISTER:
+	case NETDEV_DOWN:
+		/*
+		 * TODO - When the multipath is implemented this two cases
+		 * need to be different
+		 * - NETDEV_DOWN       - Marks multipath hops in route as dead,
+		 *                       or delete route if it isn't multipath
+		 * - NETDEV_UNREGISTER - Deletes all routes with this dev
+		 */
+		ilm_sync_dev_down(dev_net(dev), dev, true);
+		break;
+	case NETDEV_CHANGEMPLS:
+		if (!(dev->flags & IFF_MPLS))
+			ilm_sync_dev_down(dev_net(dev), dev, true);
+		/* TODO - Other case should be implemented when multipath is implemented */
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
 static struct ilm *
 get_ilm(const struct net *net, u32 label, u8 tc, bool exact_match)
 {
