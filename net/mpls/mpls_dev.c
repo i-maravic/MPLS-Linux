@@ -149,7 +149,7 @@ static int
 mpls_tunnel_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct mpls_tunnel *tunnel = netdev_priv(dev);
-	if (new_mtu < 68 ||
+	if (new_mtu < (68 + dev->hard_header_len + tunnel->hlen) ||
 	    new_mtu > 0xFFF8 - dev->hard_header_len - tunnel->hlen)
 		return -EINVAL;
 
@@ -237,11 +237,10 @@ static int mpls_tunnel_validate(struct nlattr *tb[], struct nlattr *data[])
 }
 
 static int
-mpls_tunnel_bind_dev(struct net_device *dev)
+mpls_tunnel_bind_dev(struct net_device *dev, struct net_device **tdev_ptr)
 {
 	const struct nhlfe *nhlfe;
 	struct mpls_tunnel *tunnel;
-	struct net_device *tdev = NULL;
 	struct net *net;
 	struct dst_entry *dst;
 	int hlen = LL_MAX_HEADER;
@@ -257,26 +256,30 @@ mpls_tunnel_bind_dev(struct net_device *dev)
 	net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(dev);
 	dst = nhlfe_get_nexthop_dst(nhlfe, net, NULL);
 	if (!IS_ERR(dst)) {
-		tdev = dst->dev;
+		*tdev_ptr = dst->dev;
 		dst_release(dst);
 	}
 
-	if (!tdev && link)
-		tdev = __dev_get_by_index(net, link);
+	if (!(*tdev_ptr) && link)
+		*tdev_ptr = __dev_get_by_index(net, link);
 
-	if (tdev) {
-		hlen = tdev->hard_header_len + tdev->needed_headroom;
-		mtu = tdev->mtu;
+	if (*tdev_ptr) {
+		hlen = (*tdev_ptr)->hard_header_len + (*tdev_ptr)->needed_headroom;
+		mtu = (*tdev_ptr)->mtu;
 	}
 
 	dev->iflink = link;
 	dev->needed_headroom = addend + hlen;
-	mtu -= dev->hard_header_len + addend;
 	tunnel->hlen = addend;
 
-	if (mtu < 68)
-		mtu = 68;
+	if (mtu < (68 + dev->hard_header_len + tunnel->hlen))
+		mtu = (68 + dev->hard_header_len + tunnel->hlen);
 
+	/*
+	 * Returns mtu without the MPLS header length reduction!
+	 * mtu will be reduced to the appropriate value in function
+	 * mpls_tunnel_change_mtu()
+	 */
 	return mtu;
 }
 
@@ -285,9 +288,11 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 		   struct nlattr *data[])
 {
 	struct mpls_tunnel *nt;
+	struct net_device *tdev = NULL;
 	struct mpls_dev_net *mdn = net_generic(dev_net(dev), mpls_dev_net_id);
 	struct nhlfe *old_nhlfe, *nhlfe;
 	int mtu;
+	int err = 0;
 
 	if (dev == mdn->master_dev)
 		return -EINVAL;
@@ -299,17 +304,37 @@ mpls_tunnel_change(struct net_device *dev, struct nlattr *tb[],
 
 	nt = netdev_priv(dev);
 	old_nhlfe = rtnl_dereference(nt->nhlfe);
-	__nhlfe_free_rcu(old_nhlfe);
 
 	rcu_assign_pointer(nt->nhlfe, nhlfe);
 
-	mtu = mpls_tunnel_bind_dev(dev);
-	if (!tb[IFLA_MTU])
-		dev->mtu = mtu;
+	mtu = mpls_tunnel_bind_dev(dev, &tdev);
+
+	/* Chaining one MPLS if to another isn't allowed! */
+	if (dev->iflink && (!tdev || tdev->type == ARPHRD_MPLS)) {
+		err = -EINVAL;
+		goto err;
+	}
+
+	if (!tb[IFLA_MTU]) {
+		/* Set mtu via the dev_set_mtu,
+		 * so the appropriate notifiers will be called */
+		err = dev_set_mtu(dev, mtu);
+
+		if (unlikely(err))
+			goto err;
+	}
+
+	__nhlfe_free_rcu(old_nhlfe);
 
 	netdev_state_change(dev);
 
 	return 0;
+
+err:
+	__nhlfe_free_rcu(nhlfe);
+	rcu_assign_pointer(nt->nhlfe, old_nhlfe);
+	mpls_tunnel_bind_dev(dev, &tdev);
+	return err;
 }
 
 static int
@@ -317,6 +342,7 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 			 struct nlattr *data[])
 {
 	struct mpls_tunnel *nt;
+	struct net_device *tdev = NULL;
 	struct nhlfe *nhlfe;
 	int mtu;
 	int err;
@@ -332,12 +358,24 @@ mpls_tunnel_new(struct net *src_net, struct net_device *dev, struct nlattr *tb[]
 	if (!tb[IFLA_ADDRESS])
 		random_ether_addr(dev->dev_addr);
 
-	mtu = mpls_tunnel_bind_dev(dev);
-	if (!tb[IFLA_MTU])
-		dev->mtu = mtu;
+	mtu = mpls_tunnel_bind_dev(dev, &tdev);
+
+	/* Chaining one MPLS interface to another isn't allowed! */
+	if (dev->iflink && (!tdev || tdev->type == ARPHRD_MPLS)) {
+		err = -EINVAL;
+		goto err;
+	}
+
+	if (!tb[IFLA_MTU]) {
+		/* Set mtu via the mpls_tunnel_change_mtu,
+		 * so the MPLS header length would be accounted */
+		err = mpls_tunnel_change_mtu(dev, mtu);
+		if (unlikely(err))
+			goto err;
+	}
 
 	err = register_netdevice(dev);
-	if (err)
+	if (unlikely(err))
 		goto err;
 
 	dev_hold(dev);
@@ -391,14 +429,149 @@ static struct rtnl_link_ops mpls_link_ops __read_mostly = {
 	.fill_info	= mpls_fill_info,
 };
 
+static void mpls_dev_sync_dev_down(const struct net *net, struct net_device *dev, bool recursive)
+{
+	struct net_device *ndev, *mpls_dev;
+
+	for_each_netdev_safe(net, mpls_dev, ndev) {
+		if (mpls_dev->type == ARPHRD_MPLS && dev != mpls_dev) {
+			struct mpls_tunnel *t = netdev_priv(mpls_dev);
+			struct nhlfe *nhlfe = rtnl_dereference(t->nhlfe);
+
+			if (nhlfe && nhlfe->ifindex == dev->ifindex)
+				unregister_netdevice(mpls_dev);
+		}
+	}
+
+	if (recursive) {
+		if (net_eq(&init_net, net)) {
+			const struct net *tmp;
+			for_each_net(tmp) {
+				if (net_eq(tmp, &init_net))
+					continue;
+				mpls_dev_sync_dev_down(tmp, dev, false);
+			}
+		} else
+			mpls_dev_sync_dev_down(&init_net, dev, false);
+	}
+}
+
+void mpls_dev_sync_net_down(struct net *net)
+{
+	struct net_device *ndev, *mpls_dev;
+
+	BUG_ON(net_eq(&init_net, net));
+
+	for_each_netdev_safe(&init_net, mpls_dev, ndev) {
+		if (mpls_dev->type == ARPHRD_MPLS) {
+			struct mpls_tunnel *t = netdev_priv(mpls_dev);
+			struct nhlfe *nhlfe = rtnl_dereference(t->nhlfe);
+
+			if (nhlfe && net_eq(nhlfe->net, net))
+				unregister_netdevice(mpls_dev);
+		}
+	}
+}
+
+static int mpls_dev_netdev_change_mtu(const struct net *net, struct net_device *dev, bool recursive)
+{
+	struct net_device *ndev, *mpls_dev;
+	int err = 0;
+
+	for_each_netdev_safe(net, mpls_dev, ndev) {
+		if (mpls_dev->type == ARPHRD_MPLS && dev != mpls_dev) {
+			struct mpls_tunnel *t = netdev_priv(mpls_dev);
+			struct nhlfe *nhlfe = rtnl_dereference(t->nhlfe);
+
+			if (nhlfe && nhlfe->ifindex == dev->ifindex) {
+				err = dev_set_mtu(mpls_dev, dev->mtu);
+				if (unlikely(err))
+					return err;
+			}
+		}
+	}
+
+	if (recursive) {
+		if (net_eq(&init_net, net)) {
+			const struct net *tmp;
+			for_each_net(tmp) {
+				if (net_eq(tmp, &init_net))
+					continue;
+				err = mpls_dev_netdev_change_mtu(tmp, dev, false);
+				if (unlikely(err))
+					return err;
+			}
+		} else
+			return mpls_dev_netdev_change_mtu(&init_net, dev, false);
+	}
+	return err;
+}
+
+static int mpls_dev_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
+{
+	struct net_device *dev = ptr;
+	int err = 0;
+
+	switch (event) {
+	case NETDEV_UP:
+		/*
+		 * TODO - Create ilm_sync_up when
+		 * MPLS multipath is implemented.
+		 * Before calling mpls_dev_sync_up we should
+		 * first check if IFF_MPLS flag is set!
+		 */
+		break;
+	case NETDEV_UNREGISTER:
+	case NETDEV_DOWN:
+		/*
+		 * TODO - When the multipath is implemented this two cases
+		 * need to be different
+		 * - NETDEV_DOWN       - Marks multipath hops in route as dead,
+		 *                       or delete route if it isn't multipath
+		 * - NETDEV_UNREGISTER - Deletes all routes with this dev
+		 */
+		mpls_dev_sync_dev_down(dev_net(dev), dev, true);
+		break;
+	case NETDEV_CHANGEMPLS:
+		if (!(dev->flags & IFF_MPLS))
+			mpls_dev_sync_dev_down(dev_net(dev), dev, true);
+		/* TODO - Other case should be implemented when multipath is implemented */
+		break;
+	case NETDEV_CHANGEMTU:
+		err = mpls_dev_netdev_change_mtu(dev_net(dev), dev, true);
+		if (unlikely(err))
+			return NOTIFY_BAD;
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block mpls_dev_netdev_notifier = {
+	.notifier_call = mpls_dev_netdev_event,
+};
+
 int __init mpls_dev_init(void)
 {
 	int err;
 	err = register_pernet_device(&mpls_dev_net_ops);
-	if (err < 0)
-		return err;
+	if (unlikely(err))
+		goto out;
 
 	err = rtnl_link_register(&mpls_link_ops);
+	if (unlikely(err))
+		goto unregister_pernet_dev;
+
+	err = register_netdevice_notifier(&mpls_dev_netdev_notifier);
+	if (unlikely(err))
+		goto unregister_rtnl_link;
+
+	return err;
+
+unregister_rtnl_link:
+	rtnl_link_unregister(&mpls_link_ops);
+unregister_pernet_dev:
+	unregister_pernet_device(&mpls_dev_net_ops);
+out:
 	return err;
 }
 
@@ -407,6 +580,7 @@ void mpls_dev_exit(void)
 	struct net_device *dev;
 	struct net_device *ndev;
 	struct net *net;
+	unregister_netdevice_notifier(&mpls_dev_netdev_notifier);
 	rtnl_link_unregister(&mpls_link_ops);
 
 	for_each_net(net)

@@ -520,7 +520,7 @@ bucket_restart:
 static void
 ilm_sync_dev_down(const struct net *net, const struct net_device *dev, bool recursive)
 {
-	struct ilm_net *ilmn = net_generic(&init_net, ilm_net_id);
+	struct ilm_net *ilmn = net_generic(net, ilm_net_id);
 	struct htable *t;
 	struct hbucket *n;
 	struct ilm *ilm;
@@ -1017,8 +1017,10 @@ static void __net_exit ilm_exit_net(struct net *net)
 
 	ilm_hash_destroy(ilmn);
 
-	if (likely(!net_eq(&init_net, net)))
+	if (likely(!net_eq(&init_net, net))) {
 		ilm_sync_net_down(net);
+		mpls_dev_sync_net_down(net);
+	}
 
 	rtnl_unlock();
 }

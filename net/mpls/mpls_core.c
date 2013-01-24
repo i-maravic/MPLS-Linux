@@ -281,8 +281,8 @@ static struct packet_type mpls_uc_packet_type = {
 	.func = mpls_recv,
 };
 
-static struct notifier_block mpls_netdev_notifier = {
-	.notifier_call = mpls_netdev_event,
+static struct notifier_block mpls_ilm_netdev_notifier = {
+	.notifier_call = mpls_ilm_netdev_event,
 };
 
 static struct mpls_ops __mpls_ops = {
@@ -323,7 +323,7 @@ static int __init mpls_init_module(void)
 	if (unlikely(err))
 		goto cleanup_sysctl;
 
-	err = register_netdevice_notifier(&mpls_ilm_netdev_event);
+	err = register_netdevice_notifier(&mpls_ilm_netdev_notifier);
 	if (unlikely(err))
 		goto cleanup_mibs;
 
@@ -347,7 +347,7 @@ err:
 static void __exit mpls_exit_module(void)
 {
 	dev_remove_pack(&mpls_uc_packet_type);
-	unregister_netdevice_notifier(&mpls_netdev_notifier);
+	unregister_netdevice_notifier(&mpls_ilm_netdev_notifier);
 	exit_mpls_mibs();
 	mpls_sysctl_exit();
 	ilm_exit();
