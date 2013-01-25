@@ -253,7 +253,9 @@ mpls_tunnel_bind_dev(struct net_device *dev, struct net_device **tdev_ptr)
 	addend = nhlfe->num_push * MPLS_HDR_LEN;
 
 	link = nhlfe->dev ? nhlfe->dev->ifindex : 0;
-	net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(dev);
+
+	net = nhlfe_get_net(nhlfe, dev);
+
 	dst = nhlfe_get_nexthop_dst(nhlfe, net, NULL);
 	if (!IS_ERR(dst)) {
 		*tdev_ptr = dst->dev;

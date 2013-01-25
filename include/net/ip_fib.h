@@ -77,7 +77,8 @@ struct fib_nh {
 	struct net_device	*nh_dev;
 	struct hlist_node	nh_hash;
 #if IS_ENABLED(CONFIG_MPLS)
-	struct hlist_node	nhlfe_hash;
+	struct hlist_node	nhlfe_devhash;
+	struct hlist_node	nhlfe_nethash;
 #endif
 	struct fib_info		*nh_parent;
 	unsigned int		nh_flags;
@@ -288,6 +289,7 @@ extern int fib_validate_source(struct sk_buff *skb, __be32 src, __be32 dst,
 			       u8 tos, int oif, struct net_device *dev,
 			       struct in_device *idev, u32 *itag);
 extern void fib_select_default(struct fib_result *res);
+extern void fib_flush(struct net *net);
 #ifdef CONFIG_IP_ROUTE_CLASSID
 static inline int fib_num_tclassid_users(struct net *net)
 {
@@ -307,6 +309,9 @@ extern int fib_sync_down_addr(struct net *net, __be32 local);
 extern void fib_update_nh_saddrs(struct net_device *dev);
 extern int fib_sync_up(struct net_device *dev, bool mpls_only);
 extern void fib_select_multipath(struct fib_result *res);
+#if IS_ENABLED(CONFIG_MPLS)
+extern int fib_sync_down_net(struct net *net);
+#endif
 
 /* Exported by fib_trie.c */
 extern void fib_trie_init(void);

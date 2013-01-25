@@ -259,6 +259,15 @@ mpls_nhlfe_eq(struct nhlfe *lhs, struct nhlfe *rhs)
 	return memcmp(NHLFE_CMPR_START(lhs), NHLFE_CMPR_START(rhs), NHLFE_CMPR_LEN(lhs)) == 0;
 }
 
+static inline struct net *
+nhlfe_get_net(const struct nhlfe *nhlfe, const struct net_device *dev)
+{
+	if (nhlfe->net)
+		return nhlfe->net;
+	else
+		return (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(dev);
+}
+
 struct net_device *__mpls_master_dev(const struct net* net);
 void __nhlfe_free_rcu(struct nhlfe *nhlfe);
 void __nhlfe_free(struct nhlfe *nhlfe);

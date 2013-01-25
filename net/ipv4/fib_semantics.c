@@ -59,6 +59,7 @@ static unsigned int fib_info_cnt;
 static struct hlist_head fib_info_devhash[DEVINDEX_HASHSIZE];
 #if IS_ENABLED(CONFIG_MPLS)
 static struct hlist_head fib_info_mpls_devhash[DEVINDEX_HASHSIZE];
+static struct hlist_head fib_info_mpls_nethash[DEVINDEX_HASHSIZE];
 #endif
 
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
@@ -255,8 +256,12 @@ void fib_release_info(struct fib_info *fi)
 			if (nexthop_nh->nh_dev)
 				hlist_del(&nexthop_nh->nh_hash);
 #if IS_ENABLED(CONFIG_MPLS)
-			if (nexthop_nh->nhlfe && nexthop_nh->nhlfe->dev)
-				hlist_del(&nexthop_nh->nhlfe_hash);
+			if (nexthop_nh->nhlfe) {
+				if (nexthop_nh->nhlfe->dev)
+					hlist_del(&nexthop_nh->nhlfe_devhash);
+				if (nexthop_nh->nhlfe->net)
+					hlist_del(&nexthop_nh->nhlfe_nethash);
+			}
 #endif
 		} endfor_nexthops(fi)
 		fi->fib_dead = 1;
@@ -297,6 +302,22 @@ static inline unsigned int fib_devindex_hashfn(unsigned int val)
 		(val >> DEVINDEX_HASHBITS) ^
 		(val >> (DEVINDEX_HASHBITS * 2))) & mask;
 }
+
+#if IS_ENABLED(CONFIG_MPLS)
+static inline unsigned int fib_net_hashfn(void *ptr)
+{
+#if BITS_PER_LONG == 64
+	unsigned int val = (((unsigned long)ptr << 32) >> 32) ^ ((unsigned long)ptr >> 32);
+#else
+	unsigned int val = (unsigned int)ptr;
+#endif
+	unsigned int mask = DEVINDEX_HASHSIZE - 1;
+
+	return (val ^
+		(val >> DEVINDEX_HASHBITS) ^
+		(val >> (DEVINDEX_HASHBITS * 2))) & mask;
+}
+#endif
 
 static inline unsigned int fib_info_hashfn(const struct fib_info *fi)
 {
@@ -1059,10 +1080,29 @@ link_it:
 			hlist_add_head(&nexthop_nh->nh_hash, head);
 		}
 #if IS_ENABLED(CONFIG_MPLS)
-		if (nexthop_nh->nhlfe && nexthop_nh->nhlfe->dev) {
-			hash = fib_devindex_hashfn(nexthop_nh->nhlfe->dev->ifindex);
-			head = &fib_info_mpls_devhash[hash];
-			hlist_add_head(&nexthop_nh->nhlfe_hash, head);
+		if (nexthop_nh->nhlfe) {
+			if (nexthop_nh->nhlfe->dev) {
+				hash = fib_devindex_hashfn(nexthop_nh->nhlfe->dev->ifindex);
+				head = &fib_info_mpls_devhash[hash];
+				if (hlist_empty(head))
+					hlist_add_head(&nexthop_nh->nhlfe_devhash, head);
+				else {
+					struct hlist_node *node;
+					struct fib_nh *nh;
+					/* Add entries in order, so the flushing would be more efficient */
+					hlist_for_each_entry(nh, node, head, nhlfe_devhash) {
+						if ((unsigned long)nexthop_nh->nh_parent->fib_net <=
+								(unsigned long)nh->nh_parent->fib_net)
+							break;
+					}
+					hlist_add_before(&nexthop_nh->nhlfe_devhash, node);
+				}
+			}
+			if (nexthop_nh->nhlfe->net) {
+				hash = fib_net_hashfn(nexthop_nh->nhlfe->net);
+				head = &fib_info_mpls_nethash[hash];
+				hlist_add_head(&nexthop_nh->nhlfe_nethash, head);
+			}
 		}
 #endif
 	} endfor_nexthops(fi)
@@ -1283,49 +1323,107 @@ int fib_sync_down_dev(struct net_device *dev, int force, bool mpls_only)
 do_mpls:
 #if IS_ENABLED(CONFIG_MPLS)
 	/* Now do it for MPLS routes */
-	head = &fib_info_mpls_devhash[hash];
-	hlist_for_each_entry(nh, node, head, nhlfe_hash) {
-		struct fib_info *fi = nh->nh_parent;
-		int dead;
+	{
+		struct hlist_node *tmp;
+		bool flush = false;
 
-		BUG_ON(!fi->fib_nhs);
-		if (!nh->nhlfe || nh->nhlfe->dev != dev ||
-			    fi == prev_fi)
-			continue;
-		prev_fi = fi;
-		dead = 0;
-		change_nexthops(fi) {
-			if (nexthop_nh->nh_flags & RTNH_F_DEAD)
-				dead++;
-			else if (nexthop_nh->nhlfe &&
-				 nexthop_nh->nhlfe->dev == dev &&
-				 nexthop_nh->nh_scope != scope) {
-				nexthop_nh->nh_flags |= RTNH_F_DEAD;
-#ifdef CONFIG_IP_ROUTE_MULTIPATH
-				spin_lock_bh(&fib_multipath_lock);
-				fi->fib_power -= nexthop_nh->nh_power;
-				nexthop_nh->nh_power = 0;
-				spin_unlock_bh(&fib_multipath_lock);
-#endif
-				dead++;
+		head = &fib_info_mpls_devhash[hash];
+		prev_fi = NULL;
+		hlist_for_each_entry_safe(nh, node, tmp, head, nhlfe_devhash) {
+			struct fib_info *fi = nh->nh_parent;
+			int dead;
+
+			BUG_ON(!fi->fib_nhs);
+
+			if (flush && !net_eq(fi->fib_net, prev_fi->fib_net)) {
+				fib_flush(prev_fi->fib_net);
+				flush = false;
 			}
+
+			if (!nh->nhlfe || nh->nhlfe->dev != dev ||
+					fi == prev_fi)
+				continue;
+			prev_fi = fi;
+			dead = 0;
+			change_nexthops(fi) {
+				bool same_dev = nexthop_nh->nhlfe && nexthop_nh->nhlfe->dev == dev;
+
+				if (nexthop_nh->nh_flags & RTNH_F_DEAD)
+					dead++;
+				else if (same_dev && nexthop_nh->nh_scope != scope) {
+					nexthop_nh->nh_flags |= RTNH_F_DEAD;
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
-			if (force > 1 && nexthop_nh->nhlfe &&
-				    nexthop_nh->nhlfe->dev == dev) {
-				dead = fi->fib_nhs;
-				break;
-			}
+					spin_lock_bh(&fib_multipath_lock);
+					fi->fib_power -= nexthop_nh->nh_power;
+					nexthop_nh->nh_power = 0;
+					spin_unlock_bh(&fib_multipath_lock);
 #endif
-		} endfor_nexthops(fi)
-		if (dead == fi->fib_nhs) {
-			fi->fib_flags |= RTNH_F_DEAD;
-			ret++;
+					dead++;
+				}
+#ifdef CONFIG_IP_ROUTE_MULTIPATH
+				if (force > 1 && same_dev) {
+					dead = fi->fib_nhs;
+					break;
+				}
+#endif
+			} endfor_nexthops(fi)
+			if (dead == fi->fib_nhs) {
+				fi->fib_flags |= RTNH_F_DEAD;
+
+				if (unlikely(!net_eq(fi->fib_net, dev_net(dev))))
+					flush = true;
+				else
+					ret++;
+			}
 		}
+
+		if (flush)
+			fib_flush(prev_fi->fib_net);
 	}
 #endif
 
 	return ret;
 }
+
+#if IS_ENABLED(CONFIG_MPLS)
+int fib_sync_down_net(struct net *net)
+{
+	int ret = 0;
+	struct fib_info *prev_fi = NULL;
+	unsigned int hash = fib_net_hashfn(net);
+	struct hlist_head *head;
+	struct hlist_node *node;
+	struct fib_nh *nh;
+
+	/* Now do it for MPLS routes */
+	head = &fib_info_mpls_nethash[hash];
+	hlist_for_each_entry(nh, node, head, nhlfe_nethash) {
+		struct fib_info *fi = nh->nh_parent;
+
+		BUG_ON(!fi->fib_nhs || !net_eq(&init_net, fi->fib_net));
+		if (!nh->nhlfe || !net_eq(nh->nhlfe->net, net) ||
+			    fi == prev_fi)
+			continue;
+		prev_fi = fi;
+
+		change_nexthops(fi) {
+			if (nexthop_nh->nhlfe &&
+				    net_eq(nexthop_nh->nhlfe->net, net)) {
+				fi->fib_flags |= RTNH_F_DEAD;
+				ret++;
+				break;
+			}
+		} endfor_nexthops(fi)
+	}
+
+	if (ret) {
+		fib_flush(&init_net);
+		rt_cache_flush(&init_net);
+	}
+	return ret;
+}
+EXPORT_SYMBOL(fib_sync_down_net);
+#endif
 
 /* Must be invoked inside of an RCU protected region.  */
 void fib_select_default(struct fib_result *res)
@@ -1446,7 +1544,7 @@ do_mpls:
 #if IS_ENABLED(CONFIG_MPLS)
 	/* Now do it for MPLS routes */
 	head = &fib_info_mpls_devhash[hash];
-	hlist_for_each_entry(nh, node, head, nhlfe_hash) {
+	hlist_for_each_entry(nh, node, head, nhlfe_devhash) {
 		struct fib_info *fi = nh->nh_parent;
 		int alive;
 
@@ -1478,6 +1576,8 @@ do_mpls:
 		if (alive > 0) {
 			fi->fib_flags &= ~RTNH_F_DEAD;
 			ret++;
+			if (unlikely(!net_eq(fi->fib_net, dev_net(dev))))
+				rt_cache_flush(fi->fib_net);
 		}
 	}
 #endif

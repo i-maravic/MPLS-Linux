@@ -47,15 +47,23 @@ struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX] __read_mostly = {
 	[MPLSA_TC_INDEX]	= { .type = NLA_PROHIBIT },
 #endif
 	[MPLSA_PUSH]		= { .type = NLA_BINARY, },
+#if CONFIG_NET_NS
+	[MPLSA_NETNS_FD]	= { .type = NLA_U32 },
+	[MPLSA_NETNS_PID]	= { .type = NLA_U32 },
+	[MPLSA_NETNS_NAME]	= { .type = NLA_STRING, .len = MPLS_NETNS_NAME_MAX },
 	[MPLSA_NEXTHOP_GLOBAL]	= { .type = NLA_FLAG },
 	[MPLSA_NEXTHOP_IFNAME]	= { .type = NLA_STRING, .len = IFNAMSIZ },
+#else
+	[MPLSA_NETNS_FD]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NETNS_PID]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NETNS_NAME]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NEXTHOP_GLOBAL]	= { .type = NLA_PROHIBIT },
+	[MPLSA_NEXTHOP_IFNAME]	= { .type = NLA_PROHIBIT },
+#endif
 	[MPLSA_NEXTHOP_OIF]	= { .type = NLA_U32 },
 	[MPLSA_NEXTHOP_ADDR]	= { .type = NLA_BINARY },
 	[MPLSA_POP]		= { .type = NLA_PROHIBIT },
 	[MPLSA_SWAP]		= { .type = NLA_PROHIBIT },
-	[MPLSA_NETNS_FD]	= { .type = NLA_PROHIBIT },
-	[MPLSA_NETNS_PID]	= { .type = NLA_PROHIBIT },
-	[MPLSA_NETNS_NAME]	= { .type = NLA_PROHIBIT },
 };
 
 static inline int mpls_prepare_skb(struct sk_buff *skb,
@@ -492,6 +500,7 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	struct nlattr *data[MPLS_ATTR_MAX + 1];
 	int num_push = 0, has_swap = 0;
 	struct mpls_hdr *hdrs;
+	const struct net *route_net = NULL;
 	int error;
 
 	/* If the policy is set to NULL, we're using pre-parsed data  */
@@ -592,9 +601,6 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 		if (nla_len(tb[MPLSA_NEXTHOP_ADDR]) < sizeof(struct sockaddr))
 			goto err;
 
-		if (nhlfe->net)
-			goto err;
-
 		nhlfe->flags |= MPLS_HAS_NH;
 
 		nhlfe->family = addr->sa_family;
@@ -619,15 +625,26 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	}
 
 	if (tb[MPLSA_NEXTHOP_GLOBAL]) {
-		if (!(nhlfe->flags & MPLS_HAS_NH))
+		if (!(nhlfe->flags & MPLS_HAS_NH) || nhlfe->net)
 			goto err;
 		nhlfe->flags |= MPLS_NH_GLOBAL;
 	}
 
+	if (nhlfe->net)
+		route_net = nhlfe->net;
+	else
+		route_net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : net;
+
 	if (tb[MPLSA_NEXTHOP_IFNAME]) {
-		if (!(nhlfe->flags & MPLS_NH_GLOBAL) || !(nhlfe->flags & MPLS_HAS_NH))
+		if (!(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
-		nhlfe->dev = dev_get_by_name_rcu(&init_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
+
+		if (!((nhlfe->flags & MPLS_NH_GLOBAL) || (nhlfe->net))) {
+			error = -ENODEV;
+			goto err;
+		}
+
+		nhlfe->dev = dev_get_by_name_rcu((struct net *)route_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
 		if (!nhlfe->dev) {
 			error = -ENODEV;
 			goto err;
@@ -635,10 +652,10 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	}
 
 	if (tb[MPLSA_NEXTHOP_OIF]) {
-		if (nhlfe->dev || !(nhlfe->flags & MPLS_HAS_NH))
+		if (!(nhlfe->flags & MPLS_HAS_NH))
 			goto err;
 
-		if (nhlfe->flags & MPLS_NH_GLOBAL) {
+		if (nhlfe->dev || (nhlfe->flags & MPLS_NH_GLOBAL) || nhlfe->net) {
 			error = -ENODEV;
 			goto err;
 		}
@@ -656,6 +673,17 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	if (!(nhlfe->flags & MPLS_HAS_NH) &&
 		   (nhlfe->num_push || nhlfe->has_swap || !nhlfe->num_pop))
 		goto err;
+
+	/* Check if route is reachable */
+	if (nhlfe->flags & MPLS_HAS_NH) {
+		struct dst_entry *dst;
+		dst = nhlfe_get_nexthop_dst(nhlfe, (struct net *)route_net, NULL);
+		if (IS_ERR(dst)) {
+			error = PTR_ERR(dst);
+			goto err;
+		}
+		dst_release(dst);
+	}
 
 	if (nhlfe->dev) {
 		if (!(nhlfe->dev->flags & IFF_UP)) {
@@ -947,7 +975,7 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	unsigned int mpls_headroom = (mpls_delta_headroom > 0) ? mpls_delta_headroom : 0;
 	struct dst_entry *dst = NULL;
 	struct dst_entry *orig_dst = NULL; /* Needed for sending ICMP via dst_link_failure */
-	struct net *net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(skb->dev);
+	struct net *net = nhlfe_get_net(nhlfe, skb->dev);
 	struct net *rcv_net = dev_net(skb->dev);
 	const struct mpls_hdr *hdrs = nhlfe->data;
 	int set_ttl = 1;
@@ -1159,7 +1187,7 @@ int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb)
 		}
 
 		if (nhlfe->dev) {
-			if (nhlfe->flags & MPLS_NH_GLOBAL) {
+			if ((nhlfe->flags & MPLS_NH_GLOBAL) || nhlfe->net) {
 				err = nla_put_string(skb, MPLSA_NEXTHOP_IFNAME, nhlfe->dev->name);
 			} else
 				err = nla_put_u32(skb, MPLSA_NEXTHOP_OIF, nhlfe->dev->ifindex);

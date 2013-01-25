@@ -37,6 +37,7 @@
 #include <net/netns/generic.h>
 #include <net/route.h>
 #include <net/mpls.h>
+#include <net/ip_fib.h>
 #include "mpls_cmd.h"
 
 int ilm_net_id __read_mostly;
@@ -661,7 +662,7 @@ static struct nla_policy ilm_policy[__MPLS_ATTR_MAX] __read_mostly = {
 static inline void
 send_icmp_time_exceeded(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
-	struct net *net = (nhlfe->flags & MPLS_NH_GLOBAL) ? &init_net : dev_net(skb->dev);
+	struct net *net = nhlfe_get_net(nhlfe, skb->dev);
 	struct dst_entry *dst;
 
 	dst = nhlfe_get_nexthop_dst(nhlfe, net, skb);
@@ -1020,6 +1021,7 @@ static void __net_exit ilm_exit_net(struct net *net)
 	if (likely(!net_eq(&init_net, net))) {
 		ilm_sync_net_down(net);
 		mpls_dev_sync_net_down(net);
+		fib_sync_down_net(net);
 	}
 
 	rtnl_unlock();
