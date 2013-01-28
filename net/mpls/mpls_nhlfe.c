@@ -669,13 +669,27 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	}
 
 
-	/* Sanity check */
-	if (!(nhlfe->flags & MPLS_HAS_NH) &&
-		   (nhlfe->num_push || nhlfe->has_swap || !nhlfe->num_pop))
-		goto err;
 
-	/* Check if route is reachable */
-	if (nhlfe->flags & MPLS_HAS_NH) {
+	if (!(nhlfe->flags & MPLS_HAS_NH)) {
+		/* Sanity check */
+		if (nhlfe->num_push || nhlfe->has_swap || !nhlfe->num_pop)
+			goto err;
+		else {
+			/* Check if MPLS master dev is up and MPLS enabled */
+			struct net_device *dev = __mpls_master_dev(route_net);
+			if (unlikely(!dev)) {
+				error = -ENODEV;
+				goto err;
+			} else if (unlikely(!(dev->flags & IFF_UP))) {
+				error = -ENETDOWN;
+				goto err;
+			} else if (unlikely(!(dev->flags & IFF_MPLS))) {
+				error = -EPFNOSUPPORT;
+				goto err;
+			}
+		}
+	} else {
+		/* Check if route is reachable */
 		struct dst_entry *dst;
 		dst = nhlfe_get_nexthop_dst(nhlfe, (struct net *)route_net, NULL);
 		if (IS_ERR(dst)) {
