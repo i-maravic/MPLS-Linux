@@ -936,9 +936,19 @@ static int __init inet6_init(void)
 	if (err)
 		goto sysctl_fail;
 #endif
+
+#if IS_ENABLED(CONFIG_MPLS)
+	err = mpls_ipv6_init();
+	if (err)
+		goto mpls_fail;
+#endif
 out:
 	return err;
 
+#if IS_ENABLED(CONFIG_MPLS)
+mpls_fail:
+	ipv6_sysctl_unregister();
+#endif
 #ifdef CONFIG_SYSCTL
 sysctl_fail:
 	ipv6_packet_cleanup();
@@ -1013,6 +1023,12 @@ static void __exit inet6_exit(void)
 	tcpv6_exit();
 
 	/* Cleanup code parts. */
+#if IS_ENABLED(CONFIG_MPLS)
+	mpls_ipv6_exit();
+#endif
+#ifdef CONFIG_SYSCTL
+	ipv6_sysctl_unregister();
+#endif
 	ipv6_packet_cleanup();
 	ipv6_frag_exit();
 	ipv6_exthdrs_exit();

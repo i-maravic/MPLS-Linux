@@ -850,4 +850,9 @@ extern int ipv6_sysctl_register(void);
 extern void ipv6_sysctl_unregister(void);
 #endif
 
+#if IS_ENABLED(CONFIG_MPLS)
+extern int mpls_ipv6_init(void);
+extern void mpls_ipv6_exit(void);
+#endif
+
 #endif /* _NET_IPV6_H */
