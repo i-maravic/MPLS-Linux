@@ -68,6 +68,12 @@ or
 
 $ ip route help
 
+In order to be able to receive MPLS packets, interface must be MPLS enabled. This is done with:
+
+# ip link set eth0 mpls on
+
+To be able to receve MPLS packets recursively mpls0 interface must be brought up!
+
 To build MPLS tunnel cross connect and egress points use:
 
 # ip -M route add 200 mpls swap 300 dev eth0 192.168.3.3
@@ -80,7 +86,25 @@ MPLS sysctl parameters are located in:
 
 /proc/sys/net/mpls
 
-MPLS fully supports net namespaces. 
+MPLS fully supports net namespaces, with few extra bonuses. It's possible to jump to different
+net namespace based on MPLS label. Jumping to natns is only allowed from global netns!
+Sample configuration:
+
+# ip netns add ns1
+# ip netns exec ns1 ip link set mpls0 up
+# ip -M route add 200 mpls pop 1 netns ns1
+
+With this commands MPSL packet with label 200 will be sent to netns ns1, where the further actions
+will be performed.
+
+It's also possible to directly send MPLS packet via different netns. Sample configuration:
+
+# ip route add 1.2.3.4 mpls push 500 netns ns1 dev eth1 10.20.0.1
+
+From non-global netns, it's allowed to send MPLS packet via global netns. Sample:
+
+# ip netns exec ns1 ip route 1.2.3.5 mpls push 600 global dev eth0 172.20.0.1
+
 Reserved labels, except the RouterAlert label, are handled properly.
 
 ---
