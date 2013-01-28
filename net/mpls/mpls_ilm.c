@@ -19,25 +19,17 @@
  *      as published by the Free Software Foundation; either version
  *      2 of the License, or (at your option) any later version.
  * ****************************************************************************/
-
-#include <linux/uaccess.h>
 #include <linux/errno.h>
 #include <linux/netdevice.h>
-#include <linux/in.h>		/* must be before route.h */
-#include <linux/ip.h>		/* must be before route.h */
-#include <linux/inetdevice.h>	/* must be before route.h */
 #include <linux/rtnetlink.h>
-#include <linux/if_ether.h>
 #include <linux/if_arp.h>
-#include <linux/if_packet.h>
 #include <linux/list.h>
 #include <linux/rcupdate.h>
 #include <linux/jhash.h>
+#include <net/ip_fib.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
-#include <net/route.h>
 #include <net/mpls.h>
-#include <net/ip_fib.h>
 #include "mpls_cmd.h"
 
 int ilm_net_id __read_mostly;
@@ -726,19 +718,10 @@ send_icmp_time_exceeded(struct sk_buff *skb, const struct nhlfe *nhlfe)
 	nf_mpls_nhlfe(skb->nf_mpls) = nhlfe;
 	nf_mpls_dev(skb->nf_mpls) = skb->dev;
 
-	switch (skb->protocol) {
-	case htons(ETH_P_IP):
-		__icmp_ext_send(skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
-				skb->nf_mpls->hdr_len,
-				ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
-				nf_mpls_hdr_stack(skb->nf_mpls), mpls_send_mpls_ipv4);
-		break;
-#if IS_ENABLED(CONFIG_IPV6)
-	case htons(ETH_P_IPV6):
-		/* TODO */
-		break;
-#endif
-	}
+	icmp_ext_send_p(skb->protocol, skb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL, 0,
+			skb->nf_mpls->hdr_len,
+			ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
+			nf_mpls_hdr_stack(skb->nf_mpls));
 }
 
 static inline int
@@ -768,7 +751,7 @@ mpls_input(struct sk_buff *skb, struct net_device *dev, u32 label, u8 tc)
 		}
 		MPLSCB(skb)->hdr.ttl--;
 	}
-	ret = nhlfe_send(nhlfe, skb);
+	ret = __nhlfe_send(nhlfe, skb);
 
 	rcu_read_unlock();
 
@@ -792,7 +775,7 @@ mpls_recv(struct sk_buff *skb, struct net_device *dev,
 	u8 tc;
 
 	if (skb->pkt_type == PACKET_OTHERHOST ||
-		(dev->flags & (IFF_MPLS | IFF_UP)) != (IFF_MPLS | IFF_UP))
+		    (dev->flags & (IFF_MPLS | IFF_UP)) != (IFF_MPLS | IFF_UP))
 		goto mpls_rcv_drop;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);

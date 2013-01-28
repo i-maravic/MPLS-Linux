@@ -13,27 +13,19 @@
  *      as published by the Free Software Foundation; either version
  *      2 of the License, or (at your option) any later version.
  *******************************************************************************/
-
 #ifndef __NET_MPLS_MPLS_CMD_H__
 #define __NET_MPLS_MPLS_CMD_H__
 
 #include <net/xfrm.h>
-#include <net/dsfield.h>
-#include <net/route.h>
-#include <net/icmp.h>
-#include <net/ip.h>
 #include <net/dst.h>
-#if IS_ENABLED(CONFIG_IPV6)
-#include <linux/icmpv6.h>
-#include <net/ip6_route.h>
-#endif
+#include <net/icmp.h>
 
-#define MPLS_LABEL_EXPLICIT_NULL_IPV4	0
-#define MPLS_LABEL_ROUTER_ALERT		1
-#define MPLS_LABEL_EXPLICIT_NULL_IPV6	2
-#define MPLS_LABEL_IMPLICIT_NULL	3
-#define MPLS_LABEL_MAX_RESERVED		15
-#define MPLS_LABEL_MAX_VALID		0xfffff
+#define MPLS_LABEL_EXPLICIT_NULL_IPV4	(0)
+#define MPLS_LABEL_ROUTER_ALERT		(1)
+#define MPLS_LABEL_EXPLICIT_NULL_IPV6	(2)
+#define MPLS_LABEL_IMPLICIT_NULL	(3)
+#define MPLS_LABEL_MAX_RESERVED		(15)
+#define MPLS_LABEL_MAX_VALID		(0xfffff)
 
 static inline int mpls_is_reserved_label(u32 label)
 {
@@ -45,26 +37,17 @@ static inline int mpls_is_valid_label(u32 label)
 	return label <= MPLS_LABEL_MAX_VALID;
 }
 
-#define MAX_HDR_ARRAY_SIZE (10 * MPLS_HDR_LEN)
+static inline struct dst_entry *
+nhlfe_get_nexthop_dst(const struct nhlfe *nhlfe, struct net *net, struct sk_buff *skb)
+{
+	if (!(nhlfe->flags & MPLS_HAS_NH))
+		return NULL;
 
-#define __dscp_to_tc(_tos) ((_tos) >> 5)
-#define __tc_to_dscp(_tc) ((_tc) << 5)
+	return get_route_af(nhlfe->family, nhlfe, net, skb);
+}
 
-struct dst_entry *nhlfe_get_nexthop_dst(const struct nhlfe *nhlfe, struct net *net, struct sk_buff *skb);
-bool __push_mpls_hdr_payload(struct sk_buff *skb);
 int strip_mpls_headers(struct sk_buff *skb);
-int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4);
-int nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb);
 int mpls_ilm_netdev_event(struct notifier_block *this, unsigned long event, void *ptr);
 void mpls_dev_sync_net_down(struct net *net);
-
-#define nf_mpls_nhlfe(nf_mpls)								\
-	(*((struct nhlfe const **)(nf_mpls)->data))
-
-#define nf_mpls_dev(nf_mpls)								\
-	(*((struct net_device **)((char *)(nf_mpls)->data + sizeof(void **))))
-
-#define nf_mpls_hdr_stack(nf_mpls)					\
-	((struct mpls_hdr *)((char *)(nf_mpls)->data + 2 * sizeof(void **)))
 
 #endif /* __NET_MPLS_MPLS_CMD_H__ */

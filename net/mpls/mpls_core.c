@@ -28,10 +28,9 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/sysctl.h>
-#include <net/mpls.h>
-#include <net/snmp.h>
-#include <net/ip.h>
 #include <net/netns/generic.h>
+#include <net/snmp.h>
+#include <net/mpls.h>
 #include "mpls_cmd.h"
 
 MODULE_AUTHOR("Igor Maravic <igorm@etf.rs>, James R. Leu <jleu@mindspring.com>, Ramon Casellas <casellas@infres.enst.fr>");
@@ -287,10 +286,12 @@ static struct notifier_block mpls_ilm_netdev_notifier = {
 
 static struct mpls_ops __mpls_ops = {
 	.mpls_master_dev = __mpls_master_dev,
+	.mpls_finish_send = __mpls_finish_send,
 	.nhlfe_build	= __nhlfe_build,
 	.nhlfe_free_rcu	= __nhlfe_free_rcu,
 	.nhlfe_free	= __nhlfe_free,
 	.nhlfe_dump	= __nhlfe_dump,
+	.nhlfe_send	= __nhlfe_send,
 	.nhlfe_policy	= __nhlfe_policy
 };
 

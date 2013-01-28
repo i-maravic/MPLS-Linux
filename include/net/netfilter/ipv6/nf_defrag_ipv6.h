@@ -1,7 +1,7 @@
 #ifndef _NF_DEFRAG_IPV6_H
 #define _NF_DEFRAG_IPV6_H
 
-extern void nf_defrag_ipv6_enable(void);
+static inline void nf_defrag_ipv6_enable(void) { }
 
 extern int nf_ct_frag6_init(void);
 extern void nf_ct_frag6_cleanup(void);

@@ -38,6 +38,10 @@ obj-$(CONFIG_IPV6_SIT) += sit.o
 obj-$(CONFIG_IPV6_TUNNEL) += ip6_tunnel.o
 obj-$(CONFIG_IPV6_GRE) += ip6_gre.o
 
+ifneq ($(CONFIG_MPLS),)
+obj-$(CONFIG_IPV6) += mpls.o
+endif
+
 obj-y += addrconf_core.o exthdrs_core.o
 
 obj-$(subst m,y,$(CONFIG_IPV6)) += inet6_hashtables.o

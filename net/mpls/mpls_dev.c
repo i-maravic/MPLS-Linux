@@ -15,20 +15,16 @@
  *      2 of the License, or (at your option) any later version.
  *
   *****************************************************************************/
-
-#include <linux/in.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
-#include <linux/skbuff.h>
+#include <linux/etherdevice.h>
 #include <linux/if_arp.h>
 #include <linux/if_tunnel.h>
-#include <linux/mpls.h>
+#include <linux/kernel.h>
+#include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/rtnetlink.h>
 #include <net/net_namespace.h>
-#include <net/ip.h>
 #include <net/mpls.h>
-#include <linux/etherdevice.h>
+
 #include "mpls_cmd.h"
 
 static void mpls_tunnel_setup(struct net_device *dev);
@@ -83,7 +79,7 @@ mpls_tunnel_xmit(struct sk_buff *skb, struct net_device *tdev)
 		nhlfe = rcu_dereference(tunnel->nhlfe);
 
 	skb->dev = tdev;
-	ret = nhlfe_send(nhlfe, skb);
+	ret = __nhlfe_send(nhlfe, skb);
 	rcu_read_unlock();
 
 	switch (ret) {

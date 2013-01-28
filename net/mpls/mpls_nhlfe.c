@@ -23,20 +23,14 @@
  *
   ****************************************************************************/
 #include <linux/skbuff.h>
-#include <linux/mpls.h>
 #include <linux/netdevice.h>
 #include <linux/if_arp.h>
-#include <net/dst.h>
-#include <net/mpls.h>
 #include <linux/socket.h>
-#include <linux/inetdevice.h>
-#include <linux/in.h>
-#include <linux/ip.h>
-#include <net/arp.h>
 #include <linux/rtnetlink.h>
+#include <net/dst.h>
 #include <net/ip_fib.h>
-#include <linux/inet.h>
 #include <net/net_namespace.h>
+#include <net/mpls.h>
 #include "mpls_cmd.h"
 
 struct nla_policy __nhlfe_policy[__MPLS_ATTR_MAX] __read_mostly = {
@@ -82,47 +76,14 @@ static inline int mpls_prepare_skb(struct sk_buff *skb,
 	return 0;
 }
 
-static inline void set_ip_ttl(struct iphdr *nh, u8 new_ttl)
+static inline u8 get_ip_tc(struct sk_buff *skb)
 {
-	csum_replace2(&nh->check, htons(nh->ttl << 8), htons(new_ttl << 8));
-	nh->ttl = new_ttl;
-}
-
-static inline u8 get_tc(struct sk_buff *skb)
-{
-	switch (skb->protocol) {
-	case htons(ETH_P_IP):
-		return __dscp_to_tc(ip_hdr(skb)->tos);
-#if IS_ENABLED(CONFIG_IPV6)
-	case htons(ETH_P_IPV6):
-		return __dscp_to_tc(ipv6_get_dsfield(ipv6_hdr(skb)));
-#endif
-	case htons(ETH_P_MPLS_UC):
-		return mpls_hdr(skb)->tc;
-	default:
-		return 0;
-	}
+	return get_tos_p(skb->protocol, skb);
 }
 
 static inline int set_ip_dscp(struct sk_buff *skb, u8 tos)
 {
-	if (skb->protocol == htons(ETH_P_IP)) {
-		struct iphdr *iphdr;
-		if (unlikely(!pskb_may_pull(skb, sizeof(struct iphdr))))
-			goto discard;
-		iphdr = ip_hdr(skb);
-		ipv4_change_dsfield(iphdr, (u8)~IPTOS_PREC_MASK, IPTOS_PREC(tos));
-	}
-#if IS_ENABLED(CONFIG_IPV6)
-	else if (skb->protocol == htons(ETH_P_IPV6)) {
-		struct ipv6hdr *ipv6hdr;
-		if (unlikely(!pskb_may_pull(skb, sizeof(struct ipv6hdr))))
-			goto discard;
-		ipv6hdr = ipv6_hdr(skb);
-		ipv6_change_dsfield(ipv6hdr, (u8)~IPTOS_PREC_MASK, IPTOS_PREC(tos));
-	}
-#endif
-	else
+	if (unlikely(set_dscp_p(skb->protocol, skb, tos)))
 		goto discard;
 	return NET_XMIT_SUCCESS;
 
@@ -130,179 +91,9 @@ discard:
 	return NET_XMIT_DROP;
 }
 
-static inline void set_mpls_ttl(struct sk_buff *skb, u8 ttl)
+static inline u8 get_ip_ttl(const struct sk_buff *skb)
 {
-	if (likely(skb->protocol == htons(ETH_P_MPLS_UC)))
-		mpls_hdr(skb)->ttl = ttl;
-}
-
-static inline u8 get_ttl(struct sk_buff *skb)
-{
-	switch(skb->protocol) {
-	case htons(ETH_P_IP):
-		return ip_hdr(skb)->ttl;
-#if IS_ENABLED(CONFIG_IPV6)
-	case htons(ETH_P_IPV6):
-		return ipv6_hdr(skb)->hop_limit;
-#endif
-	case htons(ETH_P_MPLS_UC):
-		return mpls_hdr(skb)->ttl;
-	default:
-		return sysctl_mpls_default_ttl;
-	}
-}
-
-#if IS_ENABLED(CONFIG_IPV6)
-static bool
-ipv6_has_fragment_hdr(const struct ipv6hdr *ip6hdr, const struct sk_buff *skb)
-{
-	unsigned int start = skb_network_offset(skb) + sizeof(struct ipv6hdr) + ((unsigned char *)ip6hdr - skb_network_header(skb));
-	u8 nexthdr = ip6hdr->nexthdr;
-
-	while (nexthdr != NEXTHDR_FRAGMENT) {
-		struct ipv6_opt_hdr _hdr, *hp;
-		unsigned int hdrlen;
-
-		if ((!ipv6_ext_hdr(nexthdr)) || nexthdr == NEXTHDR_NONE)
-			return false;
-
-		hp = skb_header_pointer(skb, start, sizeof(_hdr), &_hdr);
-		if (hp == NULL)
-			return false;
-
-		if (nexthdr == NEXTHDR_AUTH) {
-			hdrlen = (hp->hdrlen + 2) << 2;
-		} else
-			hdrlen = ipv6_optlen(hp);
-
-		start += hdrlen;
-		nexthdr = hp->nexthdr;
-	}
-
-	return true;
-}
-#endif
-
-#define NF_MPLS_SIZE(hdr_len, has_info)							\
-	({										\
-		size_t size;								\
-		if (!has_info)								\
-			size = sizeof(struct nf_mpls);					\
-		else									\
-			size = sizeof(struct nf_mpls) + 2 * sizeof(void **) + hdr_len * sizeof(u32);\
-		ALIGN(size, MPLS_ALIGN);						\
-	})
-
-static inline struct nf_mpls *nf_mpls_alloc(struct sk_buff *skb, u16 hdr_len, u16 has_info)
-{
-	skb->nf_mpls = kzalloc(NF_MPLS_SIZE(hdr_len, has_info), GFP_ATOMIC);
-	if (likely(skb->nf_mpls)) {
-		atomic_set(&(skb->nf_mpls->use), 1);
-		skb->nf_mpls->hdr_len = hdr_len;
-		skb->nf_mpls->has_info = has_info;
-	}
-
-	return skb->nf_mpls;
-}
-
-static inline struct nf_mpls *nf_mpls_unshare(struct sk_buff *skb, u16 hdr_len, u16 has_info)
-{
-	struct nf_mpls *nf_mpls = skb->nf_mpls;
-
-	if (likely(!nf_mpls || nf_mpls->hdr_len != hdr_len || nf_mpls->has_info != has_info) ||
-		    atomic_read(&nf_mpls->use) > 1) {
-		struct nf_mpls *tmp = nf_mpls_alloc(skb, hdr_len, has_info);
-		if (likely(nf_mpls && tmp))
-			memcpy(tmp->daddr, nf_mpls->daddr, sizeof(((struct nf_mpls *)0)->daddr));
-		nf_mpls_put(nf_mpls);
-	}
-	return skb->nf_mpls;
-}
-
-static inline
-struct dst_entry *nhlfe_get_dst_ipv4(const struct nhlfe *nhlfe,
-				     struct net *net, struct sk_buff *skb)
-{
-	struct dst_entry *dst;
-	struct flowi4 fl4 = {
-		.flowi4_oif = nhlfe->dev ? nhlfe->dev->ifindex : 0,
-		.daddr = nhlfe->nh.ipv4.s_addr,
-		.flowi4_flags = FLOWI_FLAG_MPLS,
-	};
-
-	dst = (struct dst_entry *)ip_route_output_key(net, &fl4);
-	if (IS_ERR(dst))
-		return dst;
-
-	if (skb) {
-		struct nf_mpls *tmp = nf_mpls_unshare(skb, 0, 0);
-		if (likely(tmp))
-			memcpy(tmp->daddr, &nhlfe->nh.ipv4.s_addr, sizeof(nhlfe->nh.ipv4.s_addr));
-		else {
-			dst_release(dst);
-			return ERR_PTR(-ENOMEM);
-		}
-	}
-
-	return dst;
-}
-
-#if IS_ENABLED(CONFIG_IPV6)
-static inline
-struct dst_entry *nhlfe_get_dst_ipv6(const struct nhlfe *nhlfe,
-				     struct net *net, struct sk_buff *skb)
-{
-	struct dst_entry *dst;
-	struct flowi6 fl6 = {
-		.flowi6_oif = nhlfe->dev ? nhlfe->dev->ifindex : 0,
-		.daddr = nhlfe->nh.ipv6,
-		.flowi6_flags = FLOWI_FLAG_MPLS,
-	};
-
-	dst = ip6_route_output(net, NULL, &fl6);
-	if (!dst || dst->error) {
-		dst_release(dst);
-		return ERR_PTR(-ENETUNREACH);
-	}
-
-	if (skb) {
-		struct nf_mpls *tmp = nf_mpls_unshare(skb, 0, 0);
-		if (likely(tmp))
-			memcpy(tmp->daddr, &nhlfe->nh.ipv6.s6_addr, sizeof(nhlfe->nh.ipv6.s6_addr));
-		else {
-			dst_release(dst);
-			return ERR_PTR(-ENOMEM);
-		}
-	}
-	return dst;
-}
-#endif
-
-bool __push_mpls_hdr_payload(struct sk_buff *skb)
-{
-	struct dst_entry *dst = skb_dst(skb);
-	struct nf_mpls *nf_mpls = skb->nf_mpls;
-	u16 data_len = nf_mpls->hdr_len;
-
-	BUG_ON(!nf_mpls);
-
-	if (unlikely(skb_cow_head(skb, data_len + LL_RESERVED_SPACE(dst->dev)) < 0))
-		goto err;
-
-	if (data_len) {
-		skb_push(skb, data_len);
-		skb_reset_network_header(skb);
-		memcpy(skb_network_header(skb), nf_mpls_hdr_stack(nf_mpls), data_len);
-
-		if (unlikely(skb->len > dst_mtu(dst)))
-			goto err;
-		skb->protocol = htons(ETH_P_MPLS_UC);
-		mpls_peek_label(skb);
-	}
-
-	return true;
-err:
-	return false;
+	return get_ttl_p(skb->protocol, skb);
 }
 
 int strip_mpls_headers(struct sk_buff *skb)
@@ -312,17 +103,12 @@ int strip_mpls_headers(struct sk_buff *skb)
 	u16 data_len;
 	struct nf_mpls *nf_mpls;
 
-	if (skb->protocol == htons(ETH_P_IP)
-
-#if IS_ENABLED(CONFIG_IPV6)
-		   || skb->protocol == htons(ETH_P_IPV6)
-#endif
-		   ) {
+	if (mpls_get_afinfo(mpls_proto_to_family(skb->protocol))) {
 		data_len = 0;
 		goto found_ip;
 	}
 
-	if (skb->protocol != htons(ETH_P_MPLS_UC))
+	if (unlikely(skb->protocol != htons(ETH_P_MPLS_UC)))
 		goto err;
 
 	data_len = MPLS_HDR_LEN;
@@ -358,7 +144,7 @@ err:
 	return -EINVAL;
 }
 
-static inline int mpls_finish_send(struct sk_buff *skb)
+static inline int mpls_finish_send2(struct sk_buff *skb)
 {
 	struct neighbour *neigh;
 	u32 packet_length = skb->len;
@@ -385,18 +171,18 @@ err:
 	return NET_XMIT_DROP;
 }
 
-static int mpls_finish_send2(struct sk_buff *skb)
+int __mpls_finish_send(struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct net *net = dev_net(dst->dev);
 
-	if (unlikely(!__push_mpls_hdr_payload(skb))) {
+	if (unlikely(!push_mpls_hdr_payload(skb))) {
 		dev_kfree_skb(skb);
 		MPLS_INC_STATS_BH(net, MPLS_MIB_OUTERRORS);
 		return NET_XMIT_DROP;
 	}
 	MPLS_INC_STATS_BH(net, MPLS_MIB_IFOUTFRAGMENTEDPKTS);
-	return mpls_finish_send(skb);
+	return mpls_finish_send2(skb);
 }
 
 static int mpls_fragment_packet(struct sk_buff *skb, const struct nhlfe *nhlfe)
@@ -414,16 +200,12 @@ static int mpls_fragment_packet(struct sk_buff *skb, const struct nhlfe *nhlfe)
 	if (unlikely(!pskb_may_pull(skb, sizeof(struct iphdr))))
 		goto err;
 
-	if (skb->protocol == htons(ETH_P_IP)) {
-		BUG_ON(ip_hdr(skb)->frag_off & htons(IP_DF));
-		return ip_fragment(skb, mpls_finish_send2);
-	}
-#if IS_ENABLED(CONFIG_IPV6)
-	else if (skb->protocol == htons(ETH_P_IPV6)) {
-		BUG_ON(skb->len >= IPV6_MIN_MTU || !ipv6_has_fragment_hdr(ipv6_hdr(skb), skb));
-		return ip6_fragment(skb, mpls_finish_send2);
-	}
-#endif
+	ret = fragment_p(skb->protocol, skb, __mpls_finish_send);
+	if (unlikely(ret == -EPIPE))
+		goto err;
+
+	return ret;
+
 err:
 	dev_kfree_skb(skb);
 	MPLS_INC_STATS_BH(net, MPLS_MIB_OUTERRORS);
@@ -435,7 +217,7 @@ static inline int mpls_send(struct sk_buff *skb, const struct nhlfe *nhlfe)
 	BUG_ON(!skb->nf_mpls);
 	if (unlikely(skb->len > dst_mtu(skb_dst(skb))))
 		return mpls_fragment_packet(skb, nhlfe);
-	return mpls_finish_send(skb);
+	return mpls_finish_send2(skb);
 }
 
 static struct nhlfe *
@@ -524,6 +306,11 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	if (IS_ERR(nhlfe))
 		return ERR_CAST(nhlfe);
 
+	/* We need rcu_read_lock because we use
+	 * pointers to protocol functions, which are
+	 * protected with mutex/rcu lock
+	 */
+	rcu_read_lock();
 	hdrs = nhlfe->data;
 
 	if (tb[MPLSA_POP])
@@ -598,30 +385,15 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 
 	if (tb[MPLSA_NEXTHOP_ADDR]) {
 		struct sockaddr *addr = nla_data(tb[MPLSA_NEXTHOP_ADDR]);
-		if (nla_len(tb[MPLSA_NEXTHOP_ADDR]) < sizeof(struct sockaddr))
-			goto err;
 
 		nhlfe->flags |= MPLS_HAS_NH;
 
 		nhlfe->family = addr->sa_family;
-		switch (addr->sa_family) {
-		case AF_INET:
-			nhlfe->nh.ipv4 = ((struct sockaddr_in *)addr)->sin_addr;
-			if (nhlfe->nh.ipv4.s_addr == 0)
-				goto err;
-			break;
-#if IS_ENABLED(CONFIG_IPV6)
-		case AF_INET6:
-			if (nla_len(tb[MPLSA_NEXTHOP_ADDR]) < sizeof(struct sockaddr_in6))
-				goto err;
-			nhlfe->nh.ipv6 = ((struct sockaddr_in6 *)addr)->sin6_addr;
-			if (ipv6_addr_any(&nhlfe->nh.ipv6))
-				goto err;
-			break;
-#endif
-		default:
+		error = set_nh_addr_af(addr->sa_family, nhlfe, addr, nla_len(tb[MPLSA_NEXTHOP_ADDR]));
+		if (unlikely(error))
 			goto err;
-		}
+
+		error = -EINVAL;
 	}
 
 	if (tb[MPLSA_NEXTHOP_GLOBAL]) {
@@ -644,7 +416,7 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 			goto err;
 		}
 
-		nhlfe->dev = dev_get_by_name_rcu((struct net *)route_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
+		nhlfe->dev = dev_get_by_name((struct net *)route_net, nla_data(tb[MPLSA_NEXTHOP_IFNAME]));
 		if (!nhlfe->dev) {
 			error = -ENODEV;
 			goto err;
@@ -661,7 +433,7 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 		}
 
 		/* Cast away const from net */
-		nhlfe->dev = dev_get_by_index_rcu((struct net *)net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
+		nhlfe->dev = __dev_get_by_index((struct net *)net, nla_get_u32(tb[MPLSA_NEXTHOP_OIF]));
 		if (!nhlfe->dev) {
 			error = -ENODEV;
 			goto err;
@@ -714,27 +486,12 @@ struct nhlfe * __nhlfe_build(const struct net *net, struct nlattr *attr, const s
 	if (nhlfe->net)
 		hold_net(nhlfe->net);
 
+	rcu_read_unlock();
 	return nhlfe;
 err:
+	rcu_read_unlock();
 	kfree(nhlfe);
 	return ERR_PTR(error);
-}
-
-struct dst_entry *nhlfe_get_nexthop_dst(const struct nhlfe *nhlfe, struct net *net, struct sk_buff *skb)
-{
-	if (!(nhlfe->flags & MPLS_HAS_NH))
-		return NULL;
-
-	switch (nhlfe->family) {
-	case AF_INET:
-		return nhlfe_get_dst_ipv4(nhlfe, net, skb);
-#if IS_ENABLED(CONFIG_IPV6)
-	case AF_INET6:
-		return nhlfe_get_dst_ipv6(nhlfe, net, skb);
-#endif
-	default:
-		return ERR_PTR(-EPFNOSUPPORT);
-	}
 }
 
 static int mpls_pop(struct sk_buff *skb, int pop)
@@ -787,33 +544,26 @@ set_ip_params:
 			mpls_peek_label(skb);
 		} else {
 			struct iphdr *iphdr;
+			u16 af = MPLSPROTO_UNSPEC;
 			if (unlikely(pop || !pskb_may_pull(skb, sizeof(struct iphdr))))
 				goto discard;
 
 			iphdr = ip_hdr(skb);
 			if (iphdr->version == 4) {
 				skb->protocol = htons(ETH_P_IP);
-				if (likely(propagate_ttl))
-					set_ip_ttl(iphdr, cb->hdr.ttl);
-				if (likely(propagate_tc))
-					set_ip_dscp(skb, __tc_to_dscp(cb->hdr.tc));
+				af = MPLSPROTO_IPV4;
 			}
-#if IS_ENABLED(CONFIG_IPV6)
 			else if (iphdr->version == 6) {
-				struct ipv6hdr *ipv6hdr;
 				if (unlikely(!pskb_may_pull(skb, sizeof(struct ipv6hdr))))
 					goto discard;
 
-				ipv6hdr = ipv6_hdr(skb);
 				skb->protocol = htons(ETH_P_IPV6);
-				if (likely(propagate_ttl))
-					ipv6hdr->hop_limit = cb->hdr.ttl;
-				if (likely(propagate_tc))
-					set_ip_dscp(skb, __tc_to_dscp(cb->hdr.tc));
+				af = MPLSPROTO_IPV6;
 			}
-#endif
-			else
-				goto discard;
+			if (likely(propagate_ttl))
+				set_ttl_af(af, iphdr, cb->hdr.ttl);
+			if (likely(propagate_tc))
+				set_dscp_af(af, skb, __tc_to_dscp(cb->hdr.tc));
 		}
 	}
 
@@ -854,8 +604,8 @@ static int mpls_push(struct sk_buff *skb, const struct mpls_hdr *push, int num_p
 		cb->hdr.s = 0;
 	else {
 		cb->hdr.s = 1;
-		cb->hdr.ttl = get_ttl(skb);
-		cb->hdr.tc = get_tc(skb);
+		cb->hdr.ttl = get_ip_ttl(skb);
+		cb->hdr.tc = get_ip_tc(skb);
 		skb->protocol = htons(ETH_P_MPLS_UC);
 	}
 
@@ -876,16 +626,9 @@ static int mpls_push(struct sk_buff *skb, const struct mpls_hdr *push, int num_p
 
 static int mpls_receive_local(struct sk_buff *skb, const struct net *net)
 {
-	int header_len = MPLS_HDR_LEN, ret;
+	int ret;
 
-	if (skb->protocol == htons(ETH_P_IP))
-		header_len = sizeof(struct iphdr);
-#if IS_ENABLED(CONFIG_IPV6)
-	else if (skb->protocol == htons(ETH_P_IPV6))
-		header_len = sizeof(struct ipv6hdr);
-#endif
-
-	ret = mpls_prepare_skb(skb, header_len, __mpls_master_dev(net));
+	ret = mpls_prepare_skb(skb, get_hdr_len_p(skb->protocol), __mpls_master_dev(net));
 	if (unlikely(ret)) {
 		MPLS_INC_STATS_BH(net, MPLS_MIB_OUTDISCARDS);
 		dev_kfree_skb(skb);
@@ -897,38 +640,6 @@ static int mpls_receive_local(struct sk_buff *skb, const struct net *net)
 	return NET_XMIT_SUCCESS;
 }
 
-int mpls_send_mpls_ipv4(struct sock *sk, struct flowi4 *fl4)
-{
-	struct sk_buff *skb;
-	struct nf_mpls *nf_mpls;
-	struct iphdr *iph;
-	u8 ttl;
-
-	skb = ip_finish_skb(sk, fl4);
-	if (!skb)
-		return 0;
-
-	nf_mpls = skb->nf_mpls;
-	BUG_ON(!nf_mpls);
-
-	skb->dev = nf_mpls_dev(nf_mpls);
-
-	iph = ip_hdr(skb);
-	ttl = iph->ttl;
-	iph->tot_len = htons(skb->len);
-	ip_send_check(iph);
-
-	if (unlikely(!__push_mpls_hdr_payload(skb)))
-		goto err;
-
-	set_mpls_ttl(skb, ttl);
-	MPLSCB(skb)->hdr.ttl = ttl;
-
-	return nhlfe_send(nf_mpls_nhlfe(nf_mpls), skb);
-err:
-	return -ENOBUFS;
-}
-
 static void send_frag_needed(struct sk_buff *skb, const struct nhlfe *nhlfe)
 {
 	if (unlikely(strip_mpls_headers(skb) != 0))
@@ -937,52 +648,38 @@ static void send_frag_needed(struct sk_buff *skb, const struct nhlfe *nhlfe)
 	nf_mpls_nhlfe(skb->nf_mpls) = nhlfe;
 	nf_mpls_dev(skb->nf_mpls) = skb->dev;
 
-	switch (skb->protocol) {
-	case htons(ETH_P_IP):
-		__icmp_ext_send(skb, ICMP_DEST_UNREACH,
-				ICMP_FRAG_NEEDED, htonl(dst_mtu(skb_dst(skb))),
-				skb->nf_mpls->hdr_len,
-				ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
-				nf_mpls_hdr_stack(skb->nf_mpls), mpls_send_mpls_ipv4);
-		break;
-#if IS_ENABLED(CONFIG_IPV6)
-	case htons(ETH_P_IPV6):
-		/* TODO */
-		break;
-#endif
-	}
+	icmp_ext_send_p(skb->protocol, skb, ICMP_DEST_UNREACH,
+			ICMP_FRAG_NEEDED, htonl(dst_mtu(skb_dst(skb))),
+			skb->nf_mpls->hdr_len,
+			ICMP_EXT_MPLS_CLASS, ICMP_EXT_MPLS_IN_LS,
+			nf_mpls_hdr_stack(skb->nf_mpls));
 }
 
-static bool __fragmentation_allowed(struct sk_buff *skb, const struct nhlfe *nhlfe)
+static bool __fragmentation_allowed(const struct sk_buff *skb)
 {
 	struct iphdr *iph;
+	u16 af = MPLSPROTO_UNSPEC;
 
 	if (likely(skb->protocol == htons(ETH_P_MPLS_UC))) {
 		struct mpls_hdr *hdr = mpls_hdr(skb);
 		while (!hdr->s)
 			hdr++;
 		iph = (struct iphdr *)(++hdr);
-	} else {
+	} else
 		iph = ip_hdr(skb);
-	}
 
 	switch (iph->version) {
 	case 4:
-		if (iph->frag_off & htons(IP_DF))
-			return false;
-		return true;
-#if IS_ENABLED(CONFIG_IPV6)
+		af = MPLSPROTO_IPV4;
+		break;
 	case 6:
-		if (skb->len < IPV6_MIN_MTU || ipv6_has_fragment_hdr((struct ipv6hdr*) iph, skb))
-			return false;
-		return true;
-#endif
+		af = MPLSPROTO_IPV6;
+		break;
 	}
-
-	return false;
+	return frag_allowed_af(af, skb, iph);
 }
 
-netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
+netdev_tx_t __nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 {
 	int err = -ENOBUFS;
 	int mpls_delta_headroom = (nhlfe->num_push - nhlfe->num_pop) * MPLS_HDR_LEN;
@@ -1000,11 +697,7 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 	 */
 	nf_reset(skb);
 
-	if ((skb->protocol == htons(ETH_P_IP)
-#if IS_ENABLED(CONFIG_IPV6)
-		   || skb->protocol == htons(ETH_P_IPV6)
-#endif
-		   ) && skb_dst(skb)) {
+	if (mpls_get_afinfo(mpls_proto_to_family(skb->protocol)) && skb_dst(skb)) {
 		orig_dst = skb_dst(skb);
 		dst_hold(orig_dst);
 	}
@@ -1033,17 +726,12 @@ netdev_tx_t nhlfe_send(const struct nhlfe *nhlfe, struct sk_buff *skb)
 		skb_dst_set(skb, dst);
 
 		if (unlikely(skb->len > mtu)) {
-			if (!__fragmentation_allowed(skb, nhlfe)) {
+			if (!__fragmentation_allowed(skb)) {
 				if (orig_dst) {
 					skb_dst_drop(skb);
 					skb_dst_set(skb, orig_dst);
 					orig_dst = NULL;
-					if (skb->protocol == htons(ETH_P_IP))
-						icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu));
-#if IS_ENABLED(CONFIG_IPV6)
-					else if (skb->protocol == htons(ETH_P_IP))
-						icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
-#endif
+					icmp_pkt2big_send_p(skb->protocol, skb, htonl(mtu));
 				} else
 					send_frag_needed(skb, nhlfe);
 
@@ -1140,6 +828,11 @@ int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb)
 
 	hdrs = nhlfe->data;
 
+	/* We need rcu_read_lock because we use
+	 * pointers to protocol functions, which are
+	 * protected with mutex/rcu lock
+	 */
+	rcu_read_lock();
 	if (nhlfe->num_pop) {
 		err = nla_put_u8(skb, MPLSA_POP, nhlfe->num_pop);
 		if (unlikely(err))
@@ -1211,15 +904,12 @@ int __nhlfe_dump(const struct nhlfe *nhlfe, struct sk_buff *skb)
 		}
 
 		addr.sin6_family = nhlfe->family;
-		if (nhlfe->family == AF_INET)
-			((struct sockaddr_in *)&addr)->sin_addr = nhlfe->nh.ipv4;
-#if IS_ENABLED(CONFIG_IPV6)
-		else if (nhlfe->family == AF_INET6)
-			((struct sockaddr_in6 *)&addr)->sin6_addr = nhlfe->nh.ipv6;
-#endif
+		put_nh_addr_af(nhlfe->family, (struct sockaddr *)&addr, nhlfe);
+
 		err = nla_put(skb, MPLSA_NEXTHOP_ADDR, sizeof(addr), &addr);
 	}
 
 out:
+	rcu_read_unlock();
 	return err;
 }
