@@ -4764,7 +4764,7 @@ int __dev_change_flags(struct net_device *dev, unsigned int flags)
 			       IFF_DYNAMIC | IFF_MULTICAST | IFF_PORTSEL |
 			       IFF_AUTOMEDIA | IFF_MPLS)) |
 		     (dev->flags & (IFF_UP | IFF_VOLATILE | IFF_PROMISC |
-				    IFF_ALLMULTI));
+				    IFF_MPLS | IFF_ALLMULTI));
 
 	/*
 	 *	Load in the correct multicast list now the flags have changed.
