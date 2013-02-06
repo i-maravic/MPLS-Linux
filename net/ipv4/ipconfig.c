@@ -205,7 +205,7 @@ static int __init ic_open_devs(void)
 {
 	struct ic_device *d, **last;
 	struct net_device *dev;
-	unsigned short oflags;
+	unsigned int oflags;
 	unsigned long start;
 
 	last = &ic_first_dev;
@@ -245,7 +245,7 @@ static int __init ic_open_devs(void)
 			d->dev = dev;
 			*last = d;
 			last = &d->next;
-			d->flags = oflags;
+			d->flags = (short)oflags;
 			d->able = able;
 			if (able & IC_BOOTP)
 				get_random_bytes(&d->xid, sizeof(__be32));
@@ -298,7 +298,7 @@ static void __init ic_close_devs(void)
 		dev = d->dev;
 		if (dev != ic_dev) {
 			DBG(("IP-Config: Downing %s\n", dev->name));
-			dev_change_flags(dev, d->flags);
+			dev_change_flags_short(dev, d->flags);
 		}
 		kfree(d);
 	}

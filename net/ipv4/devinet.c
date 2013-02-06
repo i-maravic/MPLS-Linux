@@ -967,7 +967,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 				inet_del_ifa(in_dev, ifap, 1);
 			break;
 		}
-		ret = dev_change_flags(dev, ifr.ifr_flags);
+		ret = dev_change_flags_short(dev, ifr.ifr_flags);
 		break;
 
 	case SIOCSIFADDR:	/* Set interface address (and family) */
