@@ -4674,9 +4674,14 @@ void __dev_notify_flags(struct net_device *dev, unsigned int old_flags)
 			call_netdevice_notifiers(NETDEV_DOWN, dev);
 	}
 
-	if (dev->flags & IFF_UP &&
-	    (changes & ~(IFF_UP | IFF_PROMISC | IFF_ALLMULTI | IFF_VOLATILE)))
-		call_netdevice_notifiers(NETDEV_CHANGE, dev);
+	if (dev->flags & IFF_UP) {
+		if (changes & IFF_MPLS)
+			call_netdevice_notifiers(NETDEV_CHANGEMPLS, dev);
+
+		if (changes & ~(IFF_UP | IFF_PROMISC | IFF_ALLMULTI | IFF_MPLS | IFF_VOLATILE))
+			call_netdevice_notifiers(NETDEV_CHANGE, dev);
+	}
+
 }
 
 /**
