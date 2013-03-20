@@ -125,6 +125,24 @@ struct nf_bridge_info {
 };
 #endif
 
+#if IS_ENABLED(CONFIG_MPLS)
+struct nf_mpls {
+	atomic_t		use;
+	__be32			daddr[4];
+	__u16			has_info; /* If this is set to 1, this struct carries nhlfe and dev ptrs */
+	__u16			hdr_len; /* number of bytes in MPLS stack */
+
+	/*
+	 * data member carries existing nhlfe pointer + dev pointer + MPLS stack
+	 * when we need to send ICMP message or to fragment packet
+	 *
+	 * nhlfe and dev pointer are used only inside RCU protected section of MPLS code,
+	 * so no references are taken on them. They MUST NOT be used outside of MPLS code!
+	 */
+	u32		data[0];
+};
+#endif
+
 struct sk_buff_head {
 	/* These two members must be first. */
 	struct sk_buff	*next;
@@ -333,7 +351,7 @@ typedef unsigned char *sk_buff_data_t;
 #define NET_SKBUFF_NF_DEFRAG_NEEDED 1
 #endif
 
-/** 
+/**
  *	struct sk_buff - socket buffer
  *	@next: Next buffer in list
  *	@prev: Previous buffer in list
@@ -367,6 +385,7 @@ typedef unsigned char *sk_buff_data_t;
  *	@nfct: Associated connection, if any
  *	@nfct_reasm: netfilter conntrack re-assembly pointer
  *	@nf_bridge: Saved data about a bridged frame - see br_netfilter.c
+ *	@nf_mpls: Saved data about a MPLS frame - see mpls_nhlfe.c
  *	@skb_iif: ifindex of device we arrived on
  *	@tc_index: Traffic control index
  *	@tc_verd: traffic control verdict
@@ -455,6 +474,9 @@ struct sk_buff {
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	struct nf_bridge_info	*nf_bridge;
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nf_mpls		*nf_mpls;
 #endif
 
 	int			skb_iif;
@@ -548,7 +570,7 @@ static inline bool skb_pfmemalloc(const struct sk_buff *skb)
  */
 static inline struct dst_entry *skb_dst(const struct sk_buff *skb)
 {
-	/* If refdst was not refcounted, check we still are in a 
+	/* If refdst was not refcounted, check we still are in a
 	 * rcu_read_lock section
 	 */
 	WARN_ON((skb->_skb_refdst & SKB_DST_NOREF) &&
@@ -2165,7 +2187,7 @@ static inline int skb_cow_head(struct sk_buff *skb, unsigned int headroom)
  *	is untouched. Otherwise it is extended. Returns zero on
  *	success. The skb is freed on error.
  */
- 
+
 static inline int skb_padto(struct sk_buff *skb, unsigned int len)
 {
 	unsigned int size = skb->len;
@@ -2622,6 +2644,18 @@ static inline void nf_bridge_get(struct nf_bridge_info *nf_bridge)
 		atomic_inc(&nf_bridge->use);
 }
 #endif /* CONFIG_BRIDGE_NETFILTER */
+#if IS_ENABLED(CONFIG_MPLS)
+static inline void nf_mpls_put(struct nf_mpls *nf_mpls)
+{
+	if (nf_mpls && atomic_dec_and_test(&nf_mpls->use))
+		kfree(nf_mpls);
+}
+static inline void nf_mpls_get(struct nf_mpls *nf_mpls)
+{
+	if (nf_mpls)
+		atomic_inc(&nf_mpls->use);
+}
+#endif /* CONFIG_MPLS */
 static inline void nf_reset(struct sk_buff *skb)
 {
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
@@ -2635,6 +2669,10 @@ static inline void nf_reset(struct sk_buff *skb)
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(skb->nf_bridge);
 	skb->nf_bridge = NULL;
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+	nf_mpls_put(skb->nf_mpls);
+	skb->nf_mpls = NULL;
 #endif
 }
 
@@ -2654,6 +2692,10 @@ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 	dst->nf_bridge  = src->nf_bridge;
 	nf_bridge_get(src->nf_bridge);
 #endif
+#if IS_ENABLED(CONFIG_MPLS)
+	dst->nf_mpls    = src->nf_mpls;
+	nf_mpls_get(src->nf_mpls);
+#endif
 }
 
 static inline void nf_copy(struct sk_buff *dst, const struct sk_buff *src)
@@ -2666,6 +2708,9 @@ static inline void nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(dst->nf_bridge);
+#endif
+#if IS_ENABLED(CONFIG_MPLS)
+	nf_mpls_put(dst->nf_mpls);
 #endif
 	__nf_copy(dst, src);
 }

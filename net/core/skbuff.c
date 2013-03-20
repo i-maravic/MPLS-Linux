@@ -571,6 +571,9 @@ static void skb_release_head_state(struct sk_buff *skb)
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(skb->nf_bridge);
 #endif
+#if IS_ENABLED(CONFIG_MPLS)
+	nf_mpls_put(skb->nf_mpls);
+#endif
 /* XXX: IS this still necessary? - JHS */
 #ifdef CONFIG_NET_SCHED
 	skb->tc_index = 0;
