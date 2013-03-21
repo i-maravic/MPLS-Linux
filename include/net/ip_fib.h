@@ -22,6 +22,9 @@
 #include <net/fib_rules.h>
 #include <net/inetpeer.h>
 #include <linux/percpu.h>
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
 
 struct fib_config {
 	u8			fc_dst_len;
@@ -39,6 +42,9 @@ struct fib_config {
 	__be32			fc_prefsrc;
 	struct nlattr		*fc_mx;
 	struct rtnexthop	*fc_mp;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nhlfe		*fc_nhlfe;
+#endif
 	int			fc_mx_len;
 	int			fc_mp_len;
 	u32			fc_flow;
@@ -48,6 +54,7 @@ struct fib_config {
 
 struct fib_info;
 struct rtable;
+struct nhlfe;
 
 struct fib_nh_exception {
 	struct fib_nh_exception __rcu	*fnhe_next;
@@ -69,6 +76,9 @@ struct fnhe_hash_bucket {
 struct fib_nh {
 	struct net_device	*nh_dev;
 	struct hlist_node	nh_hash;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct hlist_node	nhlfe_hash;
+#endif
 	struct fib_info		*nh_parent;
 	unsigned int		nh_flags;
 	unsigned char		nh_scope;
@@ -83,6 +93,9 @@ struct fib_nh {
 	__be32			nh_gw;
 	__be32			nh_saddr;
 	int			nh_saddr_genid;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nhlfe __rcu	*nhlfe;
+#endif
 	struct rtable __rcu * __percpu *nh_pcpu_rth_output;
 	struct rtable __rcu	*nh_rth_input;
 	struct fnhe_hash_bucket	*nh_exceptions;
@@ -289,10 +302,10 @@ static inline int fib_num_tclassid_users(struct net *net)
 
 /* Exported by fib_semantics.c */
 extern int ip_fib_check_default(__be32 gw, struct net_device *dev);
-extern int fib_sync_down_dev(struct net_device *dev, int force);
+extern int fib_sync_down_dev(struct net_device *dev, int force, bool mpls_only);
 extern int fib_sync_down_addr(struct net *net, __be32 local);
 extern void fib_update_nh_saddrs(struct net_device *dev);
-extern int fib_sync_up(struct net_device *dev);
+extern int fib_sync_up(struct net_device *dev, bool mpls_only);
 extern void fib_select_multipath(struct fib_result *res);
 
 /* Exported by fib_trie.c */
