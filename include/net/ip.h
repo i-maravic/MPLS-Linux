@@ -460,4 +460,8 @@ extern void	ip_local_error(struct sock *sk, int err, __be32 daddr, __be16 dport,
 extern int ip_misc_proc_init(void);
 #endif
 
+#if IS_ENABLED(CONFIG_MPLS)
+extern void mpls_init(void);
+#endif
+
 #endif	/* _IP_H */

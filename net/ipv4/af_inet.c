@@ -1779,6 +1779,11 @@ static int __init inet_init(void)
 
 	ping_init();
 
+#if IS_ENABLED(CONFIG_MPLS)
+	/* Init MPLS IPv4 functions */
+	mpls_init();
+#endif
+
 	/*
 	 *	Set the ICMP layer up
 	 */
