@@ -56,6 +56,10 @@
 #include <net/checksum.h>
 #include <linux/mroute6.h>
 
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
+
 int __ip6_local_out(struct sk_buff *skb)
 {
 	int len;
@@ -564,6 +568,7 @@ int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 			mtu = np->frag_size;
 	}
 	mtu -= hlen + sizeof(struct frag_hdr);
+	mtu -= nf_mpls_pad(skb);
 
 	if (skb_has_frag_list(skb)) {
 		int first_len = skb_pagelen(skb);
@@ -707,7 +712,7 @@ slow_path:
 	 */
 
 	*prevhdr = NEXTHDR_FRAGMENT;
-	hroom = LL_RESERVED_SPACE(rt->dst.dev);
+	hroom = LL_RESERVED_SPACE_EXTRA(rt->dst.dev, nf_mpls_pad(skb));
 	troom = rt->dst.dev->needed_tailroom;
 
 	/*
@@ -1512,7 +1517,6 @@ struct sk_buff *ip6_finish_skb(struct sock *sk)
 	struct rt6_info *rt = (struct rt6_info *)inet->cork.base.dst;
 	struct flowi6 *fl6 = &inet->cork.fl.u.ip6;
 	unsigned char proto = fl6->flowi6_proto;
-	int err = 0;
 
 	if ((skb = __skb_dequeue(&sk->sk_write_queue)) == NULL)
 		goto out;

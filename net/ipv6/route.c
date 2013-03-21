@@ -65,6 +65,10 @@
 #include <linux/sysctl.h>
 #endif
 
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
+
 static struct rt6_info *ip6_rt_copy(struct rt6_info *ort,
 				    const struct in6_addr *dest);
 static struct dst_entry	*ip6_dst_check(struct dst_entry *dst, u32 cookie);
@@ -132,8 +136,13 @@ static inline const void *choose_neigh_daddr(struct rt6_info *rt,
 
 	if (!ipv6_addr_any(p))
 		return (const void *) p;
-	else if (skb)
+	else if (skb) {
+#if IS_ENABLED(CONFIG_MPLS)
+		if (skb->nf_mpls)
+			return skb->nf_mpls->daddr;
+#endif
 		return &ipv6_hdr(skb)->daddr;
+	}
 	return daddr;
 }
 
@@ -1359,6 +1368,10 @@ int ip6_route_add(struct fib6_config *cfg)
 	if (cfg->fc_src_len)
 		return -EINVAL;
 #endif
+#if !IS_ENABLED(CONFIG_MPLS)
+	if (cfg->fc_flags & RTF_MPLS)
+		return -EINVAL;
+#endif
 	if (cfg->fc_ifindex) {
 		err = -ENODEV;
 		dev = dev_get_by_index(net, cfg->fc_ifindex);
@@ -1476,6 +1489,31 @@ int ip6_route_add(struct fib6_config *cfg)
 		goto install_route;
 	}
 
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (cfg->fc_flags & RTF_MPLS) {
+		if (unlikely(cfg->fc_flags & RTF_GATEWAY)) {
+			err = -EINVAL;
+			goto out;
+		} else {
+			struct net_device *mpls_dev = mpls_get_master_dev(net);
+
+			if (unlikely(!mpls_dev || !dev ||
+				    dev->ifindex != mpls_dev->ifindex)) {
+				err = -EINVAL;
+				goto out;
+			}
+
+			/*
+			 * nhlfe_hold is needed here because we're decrementing
+			 * nhlfe refcnt, when we deallocate dst_entry
+			 */
+			rcu_assign_pointer(rt->dst.nhlfe, nhlfe_hold(cfg->fc_nhlfe));
+			cfg->fc_nhlfe = NULL;
+		}
+	}
+#endif
+
 	if (cfg->fc_flags & RTF_GATEWAY) {
 		const struct in6_addr *gw_addr;
 		int gwa_type;
@@ -1574,8 +1612,12 @@ out:
 		dev_put(dev);
 	if (idev)
 		in6_dev_put(idev);
-	if (rt)
+	if (rt) {
+#if IS_ENABLED(CONFIG_MPLS)
+		nhlfe_free(rt->dst.nhlfe);
+#endif
 		dst_free(&rt->dst);
+	}
 	return err;
 }
 
@@ -1619,6 +1661,11 @@ static int ip6_route_del(struct fib6_config *cfg)
 	if (!table)
 		return err;
 
+#if IS_ENABLED(CONFIG_MPLS)
+	if ((cfg->fc_flags & (RTF_MPLS | RTF_GATEWAY)) == (RTF_MPLS | RTF_GATEWAY))
+		return -EINVAL;
+#endif
+
 	read_lock_bh(&table->tb6_lock);
 
 	fn = fib6_locate(&table->tb6_root,
@@ -1638,6 +1685,13 @@ static int ip6_route_del(struct fib6_config *cfg)
 				continue;
 			if (cfg->fc_metric && cfg->fc_metric != rt->rt6i_metric)
 				continue;
+#if IS_ENABLED(CONFIG_MPLS)
+			if (cfg->fc_flags & RTF_MPLS) {
+				if (!rt->dst.nhlfe || !ipv6_addr_any(&rt->rt6i_gateway) ||
+					   !mpls_nhlfe_eq(rt->dst.nhlfe, cfg->fc_nhlfe))
+					continue;
+			}
+#endif
 			dst_hold(&rt->dst);
 			read_unlock_bh(&table->tb6_lock);
 
@@ -1781,6 +1835,9 @@ static struct rt6_info *ip6_rt_copy(struct rt6_info *ort,
 		rt->dst.input = ort->dst.input;
 		rt->dst.output = ort->dst.output;
 		rt->dst.flags |= DST_HOST;
+#if IS_ENABLED(CONFIG_MPLS)
+		rcu_assign_pointer(rt->dst.nhlfe, nhlfe_hold(ort->dst.nhlfe));
+#endif
 
 		rt->rt6i_dst.addr = *dest;
 		rt->rt6i_dst.plen = 128;
@@ -2307,6 +2364,21 @@ static int rtm_to_fib6_config(struct sk_buff *skb, struct nlmsghdr *nlh,
 		cfg->fc_mp_len = nla_len(tb[RTA_MULTIPATH]);
 	}
 
+	if (tb[RTA_MPLS])
+#if IS_ENABLED(CONFIG_MPLS)
+	{
+		cfg->fc_nhlfe = nhlfe_build(sock_net(skb->sk), tb[RTA_MPLS], mpls_policy);
+		if (IS_ERR(cfg->fc_nhlfe)) {
+			err = PTR_ERR(cfg->fc_nhlfe);
+			cfg->fc_nhlfe = NULL;
+			goto errout;
+		}
+		cfg->fc_flags |= RTF_MPLS;
+	}
+#else
+		goto errout;
+#endif
+
 	err = 0;
 errout:
 	return err;
@@ -2374,12 +2446,17 @@ static int inet6_rtm_delroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *a
 
 	err = rtm_to_fib6_config(skb, nlh, &cfg);
 	if (err < 0)
-		return err;
+		goto err;
 
 	if (cfg.fc_mp)
-		return ip6_route_multipath(&cfg, 0);
+		err = ip6_route_multipath(&cfg, 0);
 	else
-		return ip6_route_del(&cfg);
+		err = ip6_route_del(&cfg);
+err:
+#if IS_ENABLED(CONFIG_MPLS)
+	nhlfe_free(cfg.fc_nhlfe);
+#endif
+	return err;
 }
 
 static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
@@ -2389,12 +2466,17 @@ static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *a
 
 	err = rtm_to_fib6_config(skb, nlh, &cfg);
 	if (err < 0)
-		return err;
+		goto err;
 
 	if (cfg.fc_mp)
-		return ip6_route_multipath(&cfg, 1);
+		err = ip6_route_multipath(&cfg, 1);
 	else
-		return ip6_route_add(&cfg);
+		err = ip6_route_add(&cfg);
+err:
+#if IS_ENABLED(CONFIG_MPLS)
+	nhlfe_free(cfg.fc_nhlfe);
+#endif
+	return err;
 }
 
 static inline size_t rt6_nlmsg_size(void)
@@ -2408,6 +2490,7 @@ static inline size_t rt6_nlmsg_size(void)
 	       + nla_total_size(4) /* RTA_IIF */
 	       + nla_total_size(4) /* RTA_OIF */
 	       + nla_total_size(4) /* RTA_PRIORITY */
+	       + mpls_nla_size()   /* RTA_MPLS */
 	       + RTAX_MAX * nla_total_size(4) /* RTA_METRICS */
 	       + nla_total_size(sizeof(struct rta_cacheinfo));
 }
@@ -2538,6 +2621,21 @@ static int rt6_fill_node(struct net *net,
 		if (nla_put(skb, RTA_GATEWAY, 16, &rt->rt6i_gateway) < 0)
 			goto nla_put_failure;
 	}
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (rt->rt6i_flags & RTF_MPLS) {
+		struct nlattr *nest;
+		nest = nla_nest_start(skb, RTA_MPLS);
+
+		if (!nest)
+			goto nla_put_failure;
+
+		if (nhlfe_dump(rt->dst.nhlfe, skb))
+			goto nla_put_failure;
+
+		nla_nest_end(skb, nest);
+	}
+#endif
 
 	if (rt->dst.dev &&
 	    nla_put_u32(skb, RTA_OIF, rt->dst.dev->ifindex))

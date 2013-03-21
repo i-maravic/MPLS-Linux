@@ -49,6 +49,9 @@ struct fib6_config {
 	int		fc_mx_len;
 	int		fc_mp_len;
 	struct nlattr	*fc_mp;
+#if IS_ENABLED(CONFIG_MPLS)
+	struct nhlfe	*fc_nhlfe;
+#endif
 
 	struct nl_info	fc_nlinfo;
 };

@@ -38,6 +38,10 @@
 #include <net/ip6_fib.h>
 #include <net/ip6_route.h>
 
+#if IS_ENABLED(CONFIG_MPLS)
+#include <net/mpls.h>
+#endif
+
 #define RT6_DEBUG 2
 
 #if RT6_DEBUG >= 3
@@ -1289,6 +1293,12 @@ static void fib6_del_route(struct fib6_node *fn, struct rt6_info **rtp,
 	}
 
 	inet6_rt_notify(RTM_DELROUTE, rt, info);
+
+#if IS_ENABLED(CONFIG_MPLS)
+	if (rt->dst.nhlfe &&
+		   !(rt->rt6i_flags & RTF_CACHE))
+		nhlfe_free_rcu(rt->dst.nhlfe);
+#endif
 	rt6_release(rt);
 }
 
