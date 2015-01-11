@@ -80,7 +80,7 @@ To build MPLS tunnel cross connect and egress points use:
 
 MPLS SNMP stats are located in:
 
-/proc/net/mpls_stats
+/proc/net/mpls_stat
 
 MPLS sysctl parameters are located in:
 
